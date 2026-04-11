@@ -1,7 +1,7 @@
 """Integration tests: full pipeline from YAML → conftest collection → runner → report.
 
 Uses the `responses` library to mock HTTP at the requests level.
-Runs pytest as a subprocess so conftest.py is loaded fresh each time.
+Includes subprocess tests that exercise the full conftest.py pipeline.
 """
 
 import json
@@ -13,24 +13,6 @@ import pytest
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PYTHON = sys.executable
-
-
-def _run_pytest(testcase_dir, config_dir, extra_args=None):
-    """Run pytest as a subprocess against a testcase directory with a given config."""
-    args = [
-        PYTHON, "-m", "pytest",
-        testcase_dir,
-        "-v", "--tb=short", "--no-header",
-        f"--override-ini=testpaths={testcase_dir}",
-    ]
-    if extra_args:
-        args.extend(extra_args)
-    env = os.environ.copy()
-    env["AUTOTEST_CONFIG_DIR"] = config_dir
-    result = subprocess.run(
-        args, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=60,
-    )
-    return result
 
 
 def _make_config(tmp_path, base_url="http://mock-api.local", extra_env=None):
@@ -57,10 +39,10 @@ def _make_config(tmp_path, base_url="http://mock-api.local", extra_env=None):
 # Test 1: Full pipeline — YAML collection → variable extract → chained request
 # ---------------------------------------------------------------------------
 class TestFullPipeline:
-    """Test that YAML files are collected, executed in order, and variables flow."""
+    """Test runner execution with real YAML loading and mocked HTTP."""
 
-    def test_yaml_collection_and_execution(self, tmp_path):
-        """YAML testcases should be discovered and run through conftest pipeline."""
+    def test_yaml_load_and_runner_execution(self, tmp_path):
+        """YAML data loaded by data_loader should execute correctly through runner."""
         import responses
 
         # Setup mock API
@@ -665,3 +647,137 @@ class TestVariableTypePreservation:
         finally:
             responses.stop()
             responses.reset()
+
+
+# ---------------------------------------------------------------------------
+# Test 10: Subprocess conftest pipeline (real pytest collection → execution → stats)
+# ---------------------------------------------------------------------------
+class TestConftestPipeline:
+    """Test the full conftest.py pipeline via subprocess — collection, execution, stats."""
+
+    def _run_subprocess(self, testcase_dir, config_dir, extra_args=None):
+        """Run pytest as a subprocess with AUTOTEST_CONFIG_DIR set.
+
+        Uses --rootdir and -c to ensure the project's conftest.py is loaded.
+        """
+        args = [
+            PYTHON, "-m", "pytest",
+            testcase_dir,
+            "-v", "--tb=short", "--no-header",
+            f"--rootdir={PROJECT_ROOT}",
+            f"-c={os.path.join(PROJECT_ROOT, 'pytest.ini')}",
+        ]
+        if extra_args:
+            args.extend(extra_args)
+        env = os.environ.copy()
+        env["AUTOTEST_CONFIG_DIR"] = config_dir
+        return subprocess.run(
+            args, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=60,
+        )
+
+    def test_conftest_collects_and_runs_yaml(self):
+        """conftest.py should discover YAML files under testcases/ and execute them.
+
+        Uses the project's own testcases directory with a temporary YAML file.
+        """
+        tc_dir = os.path.join(PROJECT_ROOT, "testcases", "_integration_tmp")
+        os.makedirs(tc_dir, exist_ok=True)
+        yaml_path = os.path.join(tc_dir, "smoke.yaml")
+
+        try:
+            with open(yaml_path, "w") as f:
+                f.write(
+                    "module: SmokeTest\n"
+                    "testcases:\n"
+                    "  - name: httpbin_get\n"
+                    "    method: GET\n"
+                    "    url: /get\n"
+                    "    validate:\n"
+                    "      - eq: [status_code, 200]\n"
+                )
+
+            # Use the project's own config, pointing to httpbin
+            config_dir = os.path.join(PROJECT_ROOT, "config")
+            # Create a temporary env override
+            tmp_env = os.path.join(config_dir, "_inttest.yaml")
+            with open(tmp_env, "w") as f:
+                f.write(
+                    "base_url: https://httpbin.org\n"
+                    "global_headers:\n  Accept: application/json\n"
+                    "global_variables: {}\n"
+                )
+
+            result = self._run_subprocess(
+                str(tc_dir), config_dir,
+                extra_args=["--env", "_inttest"],
+            )
+
+            assert "httpbin_get" in result.stdout, (
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+            # The test case should be collected and executed (pass or fail)
+            assert "1 passed" in result.stdout or "1 failed" in result.stdout
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+            if os.path.exists(tc_dir):
+                os.rmdir(tc_dir)
+            tmp_env = os.path.join(config_dir, "_inttest.yaml")
+            if os.path.exists(tmp_env):
+                os.remove(tmp_env)
+
+    def test_stats_json_written(self):
+        """pytest_sessionfinish should write .stats.json with correct counts."""
+        tc_dir = os.path.join(PROJECT_ROOT, "testcases", "_integration_tmp2")
+        os.makedirs(tc_dir, exist_ok=True)
+        yaml_path = os.path.join(tc_dir, "mixed.yaml")
+        config_dir = os.path.join(PROJECT_ROOT, "config")
+        tmp_env = os.path.join(config_dir, "_inttest2.yaml")
+
+        try:
+            with open(yaml_path, "w") as f:
+                f.write(
+                    "module: Mixed\n"
+                    "testcases:\n"
+                    "  - name: should_pass\n"
+                    "    method: GET\n"
+                    "    url: /get\n"
+                    "    validate:\n"
+                    "      - eq: [status_code, 200]\n"
+                    "  - name: should_fail\n"
+                    "    method: GET\n"
+                    "    url: /get\n"
+                    "    validate:\n"
+                    "      - eq: [status_code, 999]\n"
+                )
+            with open(tmp_env, "w") as f:
+                f.write(
+                    "base_url: https://httpbin.org\n"
+                    "global_headers:\n  Accept: application/json\n"
+                    "global_variables: {}\n"
+                )
+
+            self._run_subprocess(
+                str(tc_dir), config_dir,
+                extra_args=["--env", "_inttest2"],
+            )
+
+            stats_path = os.path.join(PROJECT_ROOT, "reports", ".stats.json")
+            assert os.path.exists(stats_path), f"Stats file not found at {stats_path}"
+
+            with open(stats_path) as f:
+                stats = json.load(f)
+
+            assert stats["total"] == 2
+            assert stats["passed"] == 1
+            assert stats["failed"] == 1
+            assert "pass_rate" in stats
+            assert len(stats["failures"]) == 1
+            assert stats["failures"][0]["name"] == "should_fail"
+        finally:
+            if os.path.exists(yaml_path):
+                os.remove(yaml_path)
+            if os.path.exists(tc_dir):
+                os.rmdir(tc_dir)
+            if os.path.exists(tmp_env):
+                os.remove(tmp_env)

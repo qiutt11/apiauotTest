@@ -24,7 +24,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     env = config.getoption("--env", default=None)
-    config_dir = os.path.join(PROJECT_ROOT, "config")
+    config_dir = os.environ.get("AUTOTEST_CONFIG_DIR") or os.path.join(PROJECT_ROOT, "config")
     cfg = load_config(config_dir, env=env)
 
     report_type = config.getoption("--report", default=None) or cfg.get("report_type", "allure")

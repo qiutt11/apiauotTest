@@ -8,7 +8,10 @@ def setup_logger(log_dir: str = "logs") -> _loguru_logger.__class__:
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"{datetime.now().strftime('%Y-%m-%d')}.log")
 
-    _loguru_logger.remove()
+    try:
+        _loguru_logger.remove(0)  # Only remove the default stderr handler
+    except ValueError:
+        pass  # Already removed
     _loguru_logger.add(
         log_file,
         format="{time:YYYY-MM-DD HH:mm:ss} [{level}] {message}",
