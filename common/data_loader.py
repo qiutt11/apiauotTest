@@ -20,7 +20,7 @@ def load_testcases(file_path: str) -> dict[str, Any]:
 
 def _load_yaml(file_path: str) -> dict:
     with open(file_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        return yaml.safe_load(f) or {}
 
 
 def _load_json(file_path: str) -> dict:

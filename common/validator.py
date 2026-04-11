@@ -97,6 +97,8 @@ def _execute_validation(
                 passed = str(expect) in str(actual)
             elif keyword == "length":
                 passed = len(actual) == expect if actual is not None and hasattr(actual, '__len__') else False
+            else:
+                passed = False
 
             return {
                 "keyword": keyword,

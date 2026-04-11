@@ -15,7 +15,6 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     parser = argparse.ArgumentParser(description="API Autotest Framework")
-    parser.addoption = parser.add_argument
     parser.add_argument("--env", default=None, help="Test environment (dev/test/staging/prod)")
     parser.add_argument("--path", default="testcases", help="Test case path (directory or file)")
     parser.add_argument("--report", default=None, help="Report type: allure / html / both")

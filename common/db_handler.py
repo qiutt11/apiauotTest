@@ -18,21 +18,31 @@ class DBHandler:
 
     def _ensure_connection(self):
         """Reconnect if the connection has been lost."""
+        if self._conn is None:
+            raise RuntimeError("DBHandler has been closed")
         self._conn.ping(reconnect=True)
 
     def execute_setup(self, sql_list: list[dict]):
         self._ensure_connection()
-        with self._conn.cursor() as cursor:
-            for item in sql_list:
-                cursor.execute(item["sql"], item.get("params"))
-        self._conn.commit()
+        try:
+            with self._conn.cursor() as cursor:
+                for item in sql_list:
+                    cursor.execute(item["sql"], item.get("params"))
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def execute_teardown(self, sql_list: list[dict]):
         self._ensure_connection()
-        with self._conn.cursor() as cursor:
-            for item in sql_list:
-                cursor.execute(item["sql"], item.get("params"))
-        self._conn.commit()
+        try:
+            with self._conn.cursor() as cursor:
+                for item in sql_list:
+                    cursor.execute(item["sql"], item.get("params"))
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def execute_extract(self, extract_list: list[dict]) -> dict[str, Any]:
         self._ensure_connection()

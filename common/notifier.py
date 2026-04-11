@@ -51,7 +51,7 @@ def send_email(email_config: dict, stats: dict, report_path: str = None):
             encoders.encode_base64(attachment)
             attachment.add_header(
                 "Content-Disposition",
-                f"attachment; filename={os.path.basename(report_path)}",
+                f'attachment; filename="{os.path.basename(report_path)}"',
             )
             msg.attach(attachment)
 

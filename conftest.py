@@ -5,7 +5,7 @@ import allure
 import pytest
 
 from common.config_loader import load_config
-from common.data_loader import scan_testcase_files, load_testcases
+from common.data_loader import load_testcases
 from common.variable_pool import VariablePool
 from common.runner import run_testcase
 from common.hook_manager import HookManager
@@ -53,6 +53,9 @@ def pytest_configure(config):
         "total": 0, "passed": 0, "failed": 0, "skipped": 0, "failures": []
     }
 
+    # Track current test file for module variable isolation
+    config._autotest_current_file = None
+
 
 def pytest_unconfigure(config):
     if hasattr(config, "_autotest_db") and config._autotest_db:
@@ -68,10 +71,6 @@ def pytest_collect_file(parent, file_path):
 
 class TestCaseFile(pytest.File):
     def collect(self):
-        # Clear module-scope variables when entering a new test file
-        pool = self.config._autotest_pool
-        pool.clear_module()
-
         data = load_testcases(str(self.path))
         module_name = data.get("module", self.path.stem)
         for i, case in enumerate(data.get("testcases", [])):
@@ -97,6 +96,12 @@ class TestCaseItem(pytest.Item):
         logger = config._autotest_logger
         hooks = config._autotest_hooks
         db = config._autotest_db
+
+        # Clear module variables when transitioning to a new test file
+        current_file = str(self.path)
+        if config._autotest_current_file != current_file:
+            pool.clear_module()
+            config._autotest_current_file = current_file
 
         module_name = self._module_name
 
@@ -207,7 +212,6 @@ def pytest_sessionfinish(session, exitstatus):
     if stats:
         total = stats["total"]
         stats["pass_rate"] = f"{(stats['passed'] / total * 100):.1f}%" if total > 0 else "0%"
-        # duration will be patched by run.py; set a default here for standalone use
         stats.setdefault("duration", "unknown")
         stats_path = os.path.join(PROJECT_ROOT, "reports", ".stats.json")
         os.makedirs(os.path.dirname(stats_path), exist_ok=True)
