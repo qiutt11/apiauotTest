@@ -6,6 +6,8 @@ from email.mime.base import MIMEBase
 from email import encoders
 import os
 
+from loguru import logger
+
 
 def build_email_body(stats: dict) -> str:
     lines = [
@@ -53,13 +55,16 @@ def send_email(email_config: dict, stats: dict, report_path: str = None):
             )
             msg.attach(attachment)
 
-    with smtplib.SMTP_SSL(email_config["smtp_host"], email_config["smtp_port"]) as server:
-        server.login(email_config["sender"], email_config["password"])
-        server.sendmail(
-            email_config["sender"],
-            email_config["receivers"],
-            msg.as_string(),
-        )
+    try:
+        with smtplib.SMTP_SSL(email_config["smtp_host"], email_config["smtp_port"]) as server:
+            server.login(email_config["sender"], email_config["password"])
+            server.sendmail(
+                email_config["sender"],
+                email_config["receivers"],
+                msg.as_string(),
+            )
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
 
 
 def maybe_send_notification(

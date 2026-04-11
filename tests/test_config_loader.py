@@ -67,3 +67,28 @@ def test_load_email_config(config_dir):
     config = load_config(config_dir)
     assert config["email"]["enabled"] is False
     assert config["email"]["send_on"] == "fail"
+
+
+def test_deep_merge_preserves_nested_keys(tmp_path):
+    """Fix #5: env config should deep-merge, not overwrite nested dicts."""
+    main = tmp_path / "config.yaml"
+    main.write_text(
+        "current_env: test\n"
+        "email:\n"
+        "  enabled: false\n"
+        "  smtp_host: smtp.qq.com\n"
+        "  smtp_port: 465\n"
+        "  send_on: fail\n"
+    )
+    env = tmp_path / "test.yaml"
+    env.write_text(
+        "base_url: https://test.com\n"
+        "email:\n"
+        "  enabled: true\n"
+    )
+    config = load_config(str(tmp_path))
+    # enabled should be overridden
+    assert config["email"]["enabled"] is True
+    # smtp_host should be preserved (not lost by shallow merge)
+    assert config["email"]["smtp_host"] == "smtp.qq.com"
+    assert config["email"]["send_on"] == "fail"

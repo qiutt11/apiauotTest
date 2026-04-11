@@ -1,6 +1,9 @@
 import importlib.util
+import inspect
 import os
 from typing import Any, Callable
+
+from loguru import logger
 
 
 class HookManager:
@@ -16,13 +19,19 @@ class HookManager:
                 continue
             filepath = os.path.join(hooks_dir, filename)
             module_name = filename[:-3]
-            spec = importlib.util.spec_from_file_location(module_name, filepath)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if callable(attr) and not attr_name.startswith("_"):
-                    self._hooks[attr_name] = attr
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, filepath)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                for attr_name in dir(module):
+                    attr = getattr(module, attr_name)
+                    # Only register functions defined in the hook file itself
+                    if (callable(attr)
+                            and not attr_name.startswith("_")
+                            and getattr(attr, "__module__", None) == module_name):
+                        self._hooks[attr_name] = attr
+            except Exception as e:
+                logger.warning(f"Failed to load hook file {filename}: {e}")
 
     def has_hook(self, name: str) -> bool:
         return name in self._hooks

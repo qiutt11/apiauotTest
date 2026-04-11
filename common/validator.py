@@ -82,18 +82,21 @@ def _execute_validation(
                 passed = actual == expect
             elif keyword == "neq":
                 passed = actual != expect
-            elif keyword == "gt":
-                passed = actual > expect
-            elif keyword == "lt":
-                passed = actual < expect
-            elif keyword == "gte":
-                passed = actual >= expect
-            elif keyword == "lte":
-                passed = actual <= expect
+            elif keyword in ("gt", "lt", "gte", "lte"):
+                if actual is None or expect is None:
+                    passed = False
+                elif keyword == "gt":
+                    passed = actual > expect
+                elif keyword == "lt":
+                    passed = actual < expect
+                elif keyword == "gte":
+                    passed = actual >= expect
+                elif keyword == "lte":
+                    passed = actual <= expect
             elif keyword == "contains":
                 passed = str(expect) in str(actual)
             elif keyword == "length":
-                passed = len(actual) == expect
+                passed = len(actual) == expect if actual is not None and hasattr(actual, '__len__') else False
 
             return {
                 "keyword": keyword,

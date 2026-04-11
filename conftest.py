@@ -48,6 +48,11 @@ def pytest_configure(config):
     for k, v in cfg.get("global_variables", {}).items():
         config._autotest_pool.set_global(k, v)
 
+    # Stats collection — stored on config (accessible from report hooks)
+    config._autotest_stats = {
+        "total": 0, "passed": 0, "failed": 0, "skipped": 0, "failures": []
+    }
+
 
 def pytest_unconfigure(config):
     if hasattr(config, "_autotest_db") and config._autotest_db:
@@ -57,7 +62,7 @@ def pytest_unconfigure(config):
 def pytest_collect_file(parent, file_path):
     ext = file_path.suffix.lower()
     if ext in (".yaml", ".yml", ".json", ".xlsx"):
-        if "testcases" in str(file_path):
+        if any(part == "testcases" for part in file_path.parts):
             return TestCaseFile.from_parent(parent, path=file_path)
 
 
@@ -66,16 +71,17 @@ class TestCaseFile(pytest.File):
         data = load_testcases(str(self.path))
         module_name = data.get("module", self.path.stem)
         for i, case in enumerate(data.get("testcases", [])):
-            case["_module"] = module_name
             name = case.get("name", f"case_{i}")
-            yield TestCaseItem.from_parent(self, name=name, callobj=case)
+            yield TestCaseItem.from_parent(
+                self, name=name, callobj=case, module_name=module_name
+            )
 
 
 class TestCaseItem(pytest.Item):
-    def __init__(self, name, parent, callobj):
+    def __init__(self, name, parent, callobj, module_name=""):
         super().__init__(name, parent)
         self._case = callobj
-        module_name = callobj.get("_module", "")
+        self._module_name = module_name
         level = callobj.get("level", "normal")
         self.user_properties.append(("module", module_name))
         self.user_properties.append(("level", level))
@@ -88,7 +94,7 @@ class TestCaseItem(pytest.Item):
         hooks = config._autotest_hooks
         db = config._autotest_db
 
-        module_name = self._case.get("_module", "")
+        module_name = self._module_name
 
         result = run_testcase(
             case=self._case,
@@ -97,6 +103,7 @@ class TestCaseItem(pytest.Item):
             timeout=cfg.get("timeout", 30),
             hook_manager=hooks,
             db_handler=db,
+            global_headers=cfg.get("global_headers", {}),
         )
 
         # Log
@@ -151,43 +158,39 @@ class TestCaseItem(pytest.Item):
         return super().repr_failure(excinfo)
 
     def reportinfo(self):
-        module_name = self._case.get("_module", "")
-        return self.path, None, f"{module_name} > {self.name}"
+        return self.path, None, f"{self._module_name} > {self.name}"
 
 
 class TestCaseFailure(Exception):
     pass
 
 
-# Stats collection for email notification
-def pytest_sessionstart(session):
-    session._autotest_stats = {
-        "total": 0, "passed": 0, "failed": 0, "skipped": 0, "failures": []
-    }
-
-
-def pytest_runtest_logreport(report):
-    if report.when == "call":
-        session = report.session if hasattr(report, "session") else None
-        if session is None:
-            return
-        stats = session._autotest_stats
-        stats["total"] += 1
-        if report.passed:
-            stats["passed"] += 1
-        elif report.failed:
-            stats["failed"] += 1
-            stats["failures"].append({
-                "module": dict(report.user_properties).get("module", ""),
-                "name": report.nodeid.split("::")[-1],
-                "error": str(report.longreprtext)[:200],
-            })
-        elif report.skipped:
-            stats["skipped"] += 1
+# Stats collection — use pytest_runtest_makereport hook which has access to item
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call":
+        return
+    stats = getattr(item.config, "_autotest_stats", None)
+    if stats is None:
+        return
+    stats["total"] += 1
+    if report.passed:
+        stats["passed"] += 1
+    elif report.failed:
+        stats["failed"] += 1
+        stats["failures"].append({
+            "module": dict(report.user_properties).get("module", ""),
+            "name": report.nodeid.split("::")[-1],
+            "error": str(report.longreprtext)[:200],
+        })
+    elif report.skipped:
+        stats["skipped"] += 1
 
 
 def pytest_sessionfinish(session, exitstatus):
-    stats = getattr(session, "_autotest_stats", None)
+    stats = getattr(session.config, "_autotest_stats", None)
     if stats:
         total = stats["total"]
         stats["pass_rate"] = f"{(stats['passed'] / total * 100):.1f}%" if total > 0 else "0%"

@@ -48,7 +48,7 @@ def test_execute_teardown_sql(mock_connect):
         {"sql": "DELETE FROM users WHERE id = 1"},
     ])
 
-    mock_cursor.execute.assert_called_once_with("DELETE FROM users WHERE id = 1")
+    mock_cursor.execute.assert_called_once_with("DELETE FROM users WHERE id = 1", None)
     mock_conn.commit.assert_called()
     handler.close()
 

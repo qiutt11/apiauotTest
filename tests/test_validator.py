@@ -116,3 +116,24 @@ def test_validate_extra_var_reference():
     resp = _make_response(200, {"code": 0})
     results = validate_case(resp, [{"eq": ["${db_status}", "pending"]}], extra_vars={"db_status": "pending"})
     assert all(r["passed"] for r in results)
+
+
+def test_gt_with_none_actual():
+    """Fix #14: gt should not crash when actual is None."""
+    resp = _make_response(200, {"data": {}})
+    results = validate_case(resp, [{"gt": ["$.data.missing", 0]}])
+    assert not results[0]["passed"]
+
+
+def test_length_with_none():
+    """Fix #14: length should not crash on None."""
+    resp = _make_response(200, {"data": {"items": None}})
+    results = validate_case(resp, [{"length": ["$.data.items", 0]}])
+    assert not results[0]["passed"]
+
+
+def test_length_with_non_sized():
+    """Fix #14: length should not crash on int."""
+    resp = _make_response(200, {"data": {"count": 5}})
+    results = validate_case(resp, [{"length": ["$.data.count", 5]}])
+    assert not results[0]["passed"]

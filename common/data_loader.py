@@ -30,31 +30,34 @@ def _load_json(file_path: str) -> dict:
 
 def _load_excel(file_path: str) -> dict:
     wb = load_workbook(file_path, read_only=True)
-    ws = wb.active
-    module_name = ws.title
+    try:
+        ws = wb.active
+        module_name = ws.title
 
-    rows = list(ws.iter_rows(values_only=True))
-    if len(rows) < 2:
-        return {"module": module_name, "testcases": []}
+        rows = list(ws.iter_rows(values_only=True))
+        if len(rows) < 2:
+            return {"module": module_name, "testcases": []}
 
-    headers = [str(h).strip() for h in rows[0]]
-    testcases = []
+        headers = [str(h).strip() for h in rows[0]]
+        testcases = []
 
-    for row in rows[1:]:
-        case = {}
-        for i, header in enumerate(headers):
-            value = row[i] if i < len(row) else None
-            if value is None or (isinstance(value, str) and value.strip() == ""):
-                continue
-            if header in ("headers", "body", "extract", "validate",
-                          "db_setup", "db_extract", "db_teardown"):
-                case[header] = json.loads(str(value))
-            else:
-                case[header] = value
-        testcases.append(case)
+        for row in rows[1:]:
+            case = {}
+            for i, header in enumerate(headers):
+                value = row[i] if i < len(row) else None
+                if value is None or (isinstance(value, str) and value.strip() == ""):
+                    continue
+                if header in ("headers", "body", "extract", "validate",
+                              "db_setup", "db_extract", "db_teardown"):
+                    case[header] = json.loads(str(value))
+                else:
+                    case[header] = value
+            if case:  # Skip empty rows
+                testcases.append(case)
 
-    wb.close()
-    return {"module": module_name, "testcases": testcases}
+        return {"module": module_name, "testcases": testcases}
+    finally:
+        wb.close()
 
 
 def scan_testcase_files(directory: str) -> list[str]:

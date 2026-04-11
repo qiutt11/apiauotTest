@@ -35,7 +35,14 @@ class VariablePool:
             return [self.resolve(item) for item in data]
         return data
 
-    def _resolve_string(self, text: str) -> str:
+    def _resolve_string(self, text: str) -> Any:
+        # If the entire string is a single ${var}, return the typed value
+        single_match = re.fullmatch(r'\$\{(\w+)}', text)
+        if single_match:
+            value = self.get(single_match.group(1))
+            return value if value is not None else text
+
+        # Otherwise do string interpolation (always returns str)
         def replacer(match):
             key = match.group(1)
             value = self.get(key)
