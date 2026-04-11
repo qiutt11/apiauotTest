@@ -1,0 +1,21 @@
+module: 用户管理
+testcases:
+  - name: 登录获取token
+    method: POST
+    url: /api/login
+    body:
+      username: ${admin_user}
+      password: ${admin_pass}
+    extract:
+      token: $.data.token
+    validate:
+      - eq: [$.code, 0]
+
+  - name: 查询用户列表
+    method: GET
+    url: /api/users
+    headers:
+      Authorization: Bearer ${token}
+    validate:
+      - eq: [status_code, 200]
+      - eq: [$.code, 0]

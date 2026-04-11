@@ -1,0 +1,14 @@
+base_url: https://staging-api.example.com
+global_headers:
+  Content-Type: application/json
+global_variables:
+  admin_user: admin
+  admin_pass: "staging123"
+
+database:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: "staging123"
+  database: staging_db
+  charset: utf8mb4

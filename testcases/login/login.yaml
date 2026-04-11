@@ -1,0 +1,29 @@
+module: 用户登录
+testcases:
+  - name: 登录成功
+    description: 使用正确账号密码登录
+    method: POST
+    url: /api/login
+    headers:
+      Content-Type: application/json
+    body:
+      username: ${admin_user}
+      password: ${admin_pass}
+    extract:
+      token: $.data.token
+    validate:
+      - eq: [status_code, 200]
+      - eq: [$.code, 0]
+      - not_null: [$.data.token]
+
+  - name: 密码错误
+    description: 密码输入错误应返回错误码
+    method: POST
+    url: /api/login
+    body:
+      username: ${admin_user}
+      password: wrong_password
+    validate:
+      - eq: [status_code, 200]
+      - eq: [$.code, 1001]
+      - contains: [$.msg, "密码"]

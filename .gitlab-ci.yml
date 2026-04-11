@@ -1,0 +1,19 @@
+stages:
+  - test
+
+api_test:
+  stage: test
+  image: python:3.10
+  variables:
+    ENV: test
+    TEST_PATH: testcases/
+    REPORT: both
+  script:
+    - pip install -r requirements.txt
+    - python run.py --env $ENV --path $TEST_PATH --report $REPORT
+  artifacts:
+    paths:
+      - reports/
+      - logs/
+    when: always
+    expire_in: 7 days

@@ -1,0 +1,6 @@
+base_url: https://api.example.com
+global_headers:
+  Content-Type: application/json
+global_variables:
+  admin_user: admin
+  admin_pass: "prod123"
