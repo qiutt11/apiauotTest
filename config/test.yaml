@@ -1,0 +1,14 @@
+base_url: https://test-api.example.com
+global_headers:
+  Content-Type: application/json
+global_variables:
+  admin_user: admin
+  admin_pass: "123456"
+
+database:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: "123456"
+  database: test_db
+  charset: utf8mb4

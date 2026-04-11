@@ -1,0 +1,13 @@
+current_env: test
+timeout: 30
+retry: 0
+report_type: allure
+
+email:
+  enabled: false
+  smtp_host: smtp.qq.com
+  smtp_port: 465
+  sender: test@qq.com
+  password: ""
+  receivers: []
+  send_on: fail
