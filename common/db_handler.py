@@ -48,3 +48,4 @@ class DBHandler:
     def close(self):
         if self._conn:
             self._conn.close()
+            self._conn = None

@@ -38,12 +38,14 @@ def _load_excel(file_path: str) -> dict:
         if len(rows) < 2:
             return {"module": module_name, "testcases": []}
 
-        headers = [str(h).strip() for h in rows[0]]
+        headers = [str(h).strip() if h is not None else "" for h in rows[0]]
         testcases = []
 
         for row in rows[1:]:
             case = {}
             for i, header in enumerate(headers):
+                if not header:
+                    continue
                 value = row[i] if i < len(row) else None
                 if value is None or (isinstance(value, str) and value.strip() == ""):
                     continue

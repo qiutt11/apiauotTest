@@ -68,6 +68,10 @@ def pytest_collect_file(parent, file_path):
 
 class TestCaseFile(pytest.File):
     def collect(self):
+        # Clear module-scope variables when entering a new test file
+        pool = self.config._autotest_pool
+        pool.clear_module()
+
         data = load_testcases(str(self.path))
         module_name = data.get("module", self.path.stem)
         for i, case in enumerate(data.get("testcases", [])):
@@ -170,11 +174,20 @@ class TestCaseFailure(Exception):
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
-    if report.when != "call":
-        return
+
     stats = getattr(item.config, "_autotest_stats", None)
     if stats is None:
         return
+
+    # Count skips from setup phase (e.g., skipif markers)
+    if report.when == "setup" and report.skipped:
+        stats["total"] += 1
+        stats["skipped"] += 1
+        return
+
+    if report.when != "call":
+        return
+
     stats["total"] += 1
     if report.passed:
         stats["passed"] += 1
@@ -183,7 +196,7 @@ def pytest_runtest_makereport(item, call):
         stats["failures"].append({
             "module": dict(report.user_properties).get("module", ""),
             "name": report.nodeid.split("::")[-1],
-            "error": str(report.longreprtext)[:200],
+            "error": str(report.longrepr)[:200],
         })
     elif report.skipped:
         stats["skipped"] += 1
@@ -194,6 +207,8 @@ def pytest_sessionfinish(session, exitstatus):
     if stats:
         total = stats["total"]
         stats["pass_rate"] = f"{(stats['passed'] / total * 100):.1f}%" if total > 0 else "0%"
+        # duration will be patched by run.py; set a default here for standalone use
+        stats.setdefault("duration", "unknown")
         stats_path = os.path.join(PROJECT_ROOT, "reports", ".stats.json")
         os.makedirs(os.path.dirname(stats_path), exist_ok=True)
         with open(stats_path, "w", encoding="utf-8") as f:

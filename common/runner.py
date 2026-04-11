@@ -54,11 +54,23 @@ def run_testcase(
         # 3. Execute before hook
         if hook_manager and case.get("hook", {}).get("before"):
             request_data = {"method": method, "url": url, "headers": headers, "body": body}
-            request_data = hook_manager.call(case["hook"]["before"], request_data)
-            method = request_data["method"]
-            url = request_data["url"]
-            headers = request_data["headers"]
-            body = request_data["body"]
+            try:
+                request_data = hook_manager.call(case["hook"]["before"], request_data)
+                method = request_data["method"]
+                url = request_data["url"]
+                headers = request_data["headers"]
+                body = request_data["body"]
+            except Exception as e:
+                _logger.error(f"before hook failed: {e}")
+                return {
+                    "name": name,
+                    "passed": False,
+                    "response": {"status_code": None, "body": None, "headers": None, "elapsed_ms": 0, "error": None},
+                    "extracts": {},
+                    "db_vars": {},
+                    "validations": [],
+                    "error": f"before hook failed: {e}",
+                }
 
         # 4. Send HTTP request
         response = send_request(
@@ -83,7 +95,10 @@ def run_testcase(
 
         # 5. Execute after hook
         if hook_manager and case.get("hook", {}).get("after"):
-            response = hook_manager.call(case["hook"]["after"], response)
+            try:
+                response = hook_manager.call(case["hook"]["after"], response)
+            except Exception as e:
+                _logger.error(f"after hook failed: {e}")
 
         # 6. Extract variables from response
         extracts = {}

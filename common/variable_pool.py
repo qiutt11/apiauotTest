@@ -1,6 +1,8 @@
 import re
 from typing import Any
 
+from loguru import logger
+
 
 class VariablePool:
     def __init__(self):
@@ -39,14 +41,19 @@ class VariablePool:
         # If the entire string is a single ${var}, return the typed value
         single_match = re.fullmatch(r'\$\{(\w+)}', text)
         if single_match:
-            value = self.get(single_match.group(1))
-            return value if value is not None else text
+            var_name = single_match.group(1)
+            value = self.get(var_name)
+            if value is not None:
+                return value
+            logger.warning(f"Unresolved variable: ${{{var_name}}}")
+            return text
 
         # Otherwise do string interpolation (always returns str)
         def replacer(match):
             key = match.group(1)
             value = self.get(key)
             if value is None:
+                logger.warning(f"Unresolved variable: ${{{key}}}")
                 return match.group(0)
             return str(value)
         return re.sub(r'\$\{(\w+)}', replacer, text)
