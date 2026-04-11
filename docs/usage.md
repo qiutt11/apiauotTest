@@ -1,43 +1,249 @@
-# API 接口自动化测试框架 - 使用文档
+# 完整使用手册
 
-## 快速开始
+本文档涵盖框架的所有功能和配置项。新手请先阅读 [quickstart.md](quickstart.md)。
 
-### 1. 安装依赖
+---
+
+## 目录
+
+1. [安装与环境要求](#1-安装与环境要求)
+2. [配置详解](#2-配置详解)
+3. [用例编写](#3-用例编写)
+4. [用例数据格式](#4-用例数据格式)
+5. [断言关键字](#5-断言关键字)
+6. [变量系统](#6-变量系统)
+7. [接口依赖与数据传递](#7-接口依赖与数据传递)
+8. [数据库操作](#8-数据库操作)
+9. [Hook 扩展](#9-hook-扩展)
+10. [运行与命令行参数](#10-运行与命令行参数)
+11. [测试报告](#11-测试报告)
+12. [日志系统](#12-日志系统)
+13. [邮件通知](#13-邮件通知)
+14. [CI/CD 集成](#14-cicd-集成)
+15. [与被测系统集成](#15-与被测系统集成)
+16. [常见问题](#16-常见问题)
+
+---
+
+## 1. 安装与环境要求
+
+### 必须
+
+- Python 3.10+
+- pip
+
+### 可选
+
+- Allure CLI — 查看 Allure 报告时需要（[安装说明](https://docs.qameta.io/allure/#_installing_a_commandline)）
+- MySQL — 使用数据库操作功能时需要
+- Java 8+ — Allure CLI 依赖 Java 运行时
+
+### 安装
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 配置环境
+依赖清单：
 
-编辑 `config/config.yaml` 设置当前环境：
+| 包 | 用途 |
+|---|------|
+| requests | HTTP 请求 |
+| pytest | 测试引擎 |
+| pyyaml | YAML 解析 |
+| jsonpath-ng | JSONPath 数据提取 |
+| openpyxl | Excel 解析 |
+| allure-pytest | Allure 报告 |
+| pytest-html | HTML 报告 |
+| loguru | 日志 |
+| pymysql | MySQL 数据库 |
+
+---
+
+## 2. 配置详解
+
+配置文件在 `config/` 目录下，分为**主配置**和**环境配置**两层。
+
+### 2.1 主配置 `config/config.yaml`
 
 ```yaml
-current_env: test    # 修改为你的环境：dev / test / staging / prod
+# 当前使用的环境名（对应 config/ 目录下的 {env}.yaml 文件）
+current_env: test
+
+# HTTP 请求超时时间（秒）
+timeout: 30
+
+# 失败重试次数（预留，当前版本未实现）
+retry: 0
+
+# 默认报告类型：allure / html / both
+report_type: html
+
+# 邮件通知配置
+email:
+  enabled: false                # 是否开启邮件通知
+  smtp_host: smtp.qq.com        # SMTP 服务器地址
+  smtp_port: 465                # SMTP 端口（SSL）
+  sender: test@qq.com           # 发件人邮箱
+  password: ""                  # SMTP 授权码（非邮箱登录密码）
+  receivers:                    # 收件人列表
+    - dev1@company.com
+    - dev2@company.com
+  send_on: fail                 # 发送时机：always=每次 / fail=失败时 / never=不发送
 ```
 
-编辑对应环境文件（如 `config/test.yaml`）：
+### 2.2 环境配置 `config/{env}.yaml`
+
+每个环境一个文件，框架根据 `current_env` 或 `--env` 参数加载对应文件，**深合并**到主配置上。
 
 ```yaml
-base_url: https://your-api.example.com   # 你的接口地址
+# 被测系统的接口基础地址（必填）
+base_url: https://api.yourcompany.com
+
+# 全局请求头（自动添加到所有请求，用例中的 headers 会覆盖同名 key）
 global_headers:
   Content-Type: application/json
-global_variables:
-  admin_user: your_username
-  admin_pass: your_password
+  X-App-Version: "2.0"
 
-database:                                  # 数据库配置（可选）
+# 全局变量（在用例中用 ${变量名} 引用）
+global_variables:
+  admin_user: admin
+  admin_pass: "123456"
+  api_version: v1
+
+# 数据库配置（可选，不需要数据库功能可以删掉）
+database:
   host: 127.0.0.1
   port: 3306
   user: root
   password: "123456"
-  database: your_db
+  database: test_db
   charset: utf8mb4
 ```
 
-### 3. 编写用例
+### 2.3 多环境管理
 
-在 `testcases/` 目录下创建 YAML 文件：
+```
+config/
+├── config.yaml      # 主配置（公共部分）
+├── dev.yaml         # 开发环境
+├── test.yaml        # 测试环境
+├── staging.yaml     # 预发环境
+└── prod.yaml        # 生产环境
+```
+
+切换环境的两种方式：
+
+```bash
+# 方式1：修改 config.yaml 中的 current_env
+current_env: dev
+
+# 方式2：命令行参数（优先级更高）
+python3 run.py --env dev
+```
+
+### 2.4 配置合并规则
+
+环境配置会**深合并**到主配置上。例如：
+
+```yaml
+# config.yaml
+email:
+  enabled: false
+  smtp_host: smtp.qq.com
+  send_on: fail
+
+# test.yaml
+email:
+  enabled: true
+```
+
+合并结果：`email.enabled = true`，`email.smtp_host = smtp.qq.com`，`email.send_on = fail`（保留未覆盖的字段）。
+
+---
+
+## 3. 用例编写
+
+### 3.1 用例文件位置
+
+所有用例文件放在 `testcases/` 目录下，支持任意层级的子目录：
+
+```
+testcases/
+├── login/
+│   └── login.yaml
+├── user/
+│   ├── user_crud.yaml
+│   └── user_permission.yaml
+└── order/
+    └── order_flow.yaml
+```
+
+### 3.2 完整用例字段
+
+```yaml
+module: 模块名称                    # 显示在报告中的模块分组
+testcases:
+  - name: 用例名称                  # 必填
+    description: 用例描述            # 可选，显示在报告详情中
+    level: normal                   # 可选，优先级（影响 Allure 报告排序）
+    method: POST                    # 必填，HTTP 方法
+    url: /api/v1/login              # 必填，接口路径（自动拼接 base_url）
+    headers:                        # 可选，请求头
+      Authorization: Bearer ${token}
+      X-Custom: value
+    body:                           # 可选，请求体（JSON）
+      username: admin
+      password: "123456"
+    extract:                        # 可选，从响应 body 中提取变量
+      token: $.data.token
+      user_id: $.data.user.id
+    db_setup:                       # 可选，请求前执行的 SQL
+      - sql: "INSERT INTO ..."
+    db_extract:                     # 可选，请求后查询数据库提取变量
+      - sql: "SELECT ..."
+        extract:
+          db_var: column_name
+    db_teardown:                    # 可选，请求后清理 SQL
+      - sql: "DELETE FROM ..."
+    hook:                           # 可选，自定义处理函数
+      before: function_name
+      after: function_name
+    validate:                       # 必填，至少一个断言
+      - eq: [status_code, 200]
+      - eq: [$.code, 0]
+```
+
+### 3.3 执行顺序
+
+同一个 YAML 文件中的用例**按从上到下的顺序**执行。每个用例的内部执行流程：
+
+```
+1. 解析变量 ${xxx}
+2. 执行 db_setup（如有）
+3. 执行 before hook（如有）
+4. 发送 HTTP 请求
+5. 执行 after hook（如有）
+6. 从响应中 extract 提取变量
+7. 执行 db_extract 数据库查询（如有）
+8. 执行 validate 断言校验
+9. 执行 db_teardown 清理（如有，即使前面步骤失败也会执行）
+10. 记录日志
+```
+
+### 3.4 变量作用域
+
+- **同一个 YAML 文件内**：用例之间共享变量（前面 extract 的变量后面可以直接用）
+- **不同 YAML 文件之间**：变量互相隔离（切换文件时自动清理模块变量）
+- **全局变量**：在 config 中定义，所有文件都可以引用
+
+---
+
+## 4. 用例数据格式
+
+### 4.1 YAML 格式（推荐）
+
+可读性强，支持注释，是主推格式：
 
 ```yaml
 module: 用户登录
@@ -48,207 +254,637 @@ testcases:
     body:
       username: ${admin_user}
       password: ${admin_pass}
-    extract:
-      token: $.data.token
     validate:
-      - eq: [status_code, 200]
       - eq: [$.code, 0]
 ```
 
-### 4. 运行测试
+### 4.2 JSON 格式
 
-```bash
-python run.py                           # 运行全部用例
-python run.py --env dev                 # 指定环境
-python run.py --path testcases/login/   # 指定用例路径
-python run.py --report both             # 指定报告类型
+结构与 YAML 完全一致：
+
+```json
+{
+  "module": "用户登录",
+  "testcases": [
+    {
+      "name": "登录成功",
+      "method": "POST",
+      "url": "/api/login",
+      "body": {"username": "${admin_user}", "password": "${admin_pass}"},
+      "validate": [{"eq": ["$.code", 0]}]
+    }
+  ]
+}
 ```
+
+### 4.3 Excel 格式
+
+适合批量管理用例，业务人员更熟悉。
+
+- **Sheet 名称**作为模块名
+- **第一行**为表头
+- **每行**一个用例
+
+| name | method | url | headers | body | extract | validate |
+|------|--------|-----|---------|------|---------|----------|
+| 登录成功 | POST | /api/login | | {"username":"admin","password":"123456"} | {"token":"$.data.token"} | [{"eq":["$.code",0]}] |
+| 密码错误 | POST | /api/login | | {"username":"admin","password":"wrong"} | | [{"neq":["$.code",0]}] |
+
+**注意：** headers、body、extract、validate 列中需要填写**合法的 JSON 字符串**。
 
 ---
 
-## 用例编写指南
+## 5. 断言关键字
 
-### 基础结构
+| 关键字 | 说明 | 用法 | 示例 |
+|--------|------|------|------|
+| `eq` | 等于 | `eq: [表达式, 期望值]` | `eq: [$.code, 0]` |
+| `neq` | 不等于 | `neq: [表达式, 排除值]` | `neq: [$.code, -1]` |
+| `gt` | 大于 | `gt: [表达式, 下限]` | `gt: [$.data.total, 0]` |
+| `lt` | 小于 | `lt: [表达式, 上限]` | `lt: [$.data.total, 100]` |
+| `gte` | 大于等于 | `gte: [表达式, 下限]` | `gte: [status_code, 200]` |
+| `lte` | 小于等于 | `lte: [表达式, 上限]` | `lte: [status_code, 299]` |
+| `contains` | 包含子串 | `contains: [表达式, 子串]` | `contains: [$.msg, "成功"]` |
+| `not_null` | 不为空 | `not_null: [表达式]` | `not_null: [$.data.token]` |
+| `type` | 类型校验 | `type: [表达式, 类型]` | `type: [$.data.id, int]` |
+| `length` | 长度校验 | `length: [表达式, 长度]` | `length: [$.data.list, 10]` |
+
+**表达式类型：**
+- `status_code` — HTTP 状态码
+- `$.xxx` — JSONPath 表达式，从响应 body 中提取值
+- `${xxx}` — 引用变量池中的变量（如数据库提取的值）
+
+**type 支持的类型：** `int`、`float`、`str`、`list`、`dict`、`bool`
+
+---
+
+## 6. 变量系统
+
+### 6.1 变量来源
+
+| 来源 | 优先级 | 说明 |
+|------|--------|------|
+| 临时变量 | 最高 | 用例级别覆盖 |
+| 模块变量 | 中 | `extract` 和 `db_extract` 提取的值 |
+| 全局变量 | 最低 | `config/{env}.yaml` 的 `global_variables` |
+
+### 6.2 使用方式
+
+在用例的任何字符串字段中使用 `${变量名}`：
 
 ```yaml
-module: 模块名称
-testcases:
-  - name: 用例名称
-    description: 用例描述（可选）
-    level: normal          # 优先级：blocker/critical/normal/minor/trivial（可选）
-    method: POST           # 请求方法：GET/POST/PUT/DELETE/PATCH
-    url: /api/path         # 接口路径（会自动拼接 base_url）
-    headers:               # 请求头（可选）
-      Authorization: Bearer ${token}
-    body:                  # 请求体（可选）
-      key: value
-    extract:               # 提取响应数据（可选）
-      变量名: JSONPath表达式
-    validate:              # 断言（至少一个）
-      - eq: [表达式, 期望值]
+url: /api/users/${user_id}                # URL 路径中
+headers:
+  Authorization: Bearer ${token}          # 请求头中
+body:
+  parent_id: ${dept_id}                   # 请求体中（保留原始类型）
+validate:
+  - eq: [${db_status}, "active"]          # 断言中
+db_extract:
+  - sql: "SELECT * FROM orders WHERE id = ${order_id}"  # SQL 中
 ```
 
-### 断言关键字
+### 6.3 类型保留
 
-| 关键字 | 说明 | 示例 |
-|--------|------|------|
-| `eq` | 等于 | `eq: [$.code, 0]` |
-| `neq` | 不等于 | `neq: [$.code, -1]` |
-| `gt` | 大于 | `gt: [$.data.total, 0]` |
-| `lt` | 小于 | `lt: [$.data.total, 100]` |
-| `gte` | 大于等于 | `gte: [status_code, 200]` |
-| `lte` | 小于等于 | `lte: [status_code, 299]` |
-| `contains` | 包含 | `contains: [$.msg, "成功"]` |
-| `not_null` | 不为空 | `not_null: [$.data.token]` |
-| `type` | 类型校验 | `type: [$.data.id, int]` |
-| `length` | 长度校验 | `length: [$.data.list, 10]` |
-
-### 变量引用
-
-使用 `${变量名}` 引用变量。变量来源：
-
-1. **全局变量**：`config/{env}.yaml` 中的 `global_variables`
-2. **接口提取**：`extract` 从响应中提取的值
-3. **数据库提取**：`db_extract` 从数据库查询的值
+当 `${变量名}` 是字段的**完整值**时，保留变量的原始类型：
 
 ```yaml
+body:
+  user_id: ${id}    # 如果 id=42（整数），发送的是 42 而不是 "42"
+  name: "User ${id}" # 嵌入在字符串中时，转为字符串 "User 42"
+```
+
+### 6.4 排错
+
+如果变量未找到，日志中会输出警告：`Unresolved variable: ${xxx}`。常见原因：
+- 变量名拼写错误
+- 提取变量的上游用例失败了
+- 跨文件引用（不同 YAML 文件间变量不共享）
+
+---
+
+## 7. 接口依赖与数据传递
+
+### 7.1 基本模式
+
+```yaml
+# 步骤1：登录 → 提取 token
 - name: 登录
   method: POST
   url: /api/login
-  body:
-    username: ${admin_user}      # 引用全局变量
+  body: {username: admin, password: "123456"}
   extract:
-    token: $.data.token          # 提取到变量池
+    token: $.data.token
+  validate:
+    - eq: [$.code, 0]
 
-- name: 查询用户
+# 步骤2：用 token 调用其他接口
+- name: 获取我的信息
   method: GET
-  url: /api/users
+  url: /api/me
   headers:
-    Authorization: Bearer ${token}  # 引用上一步提取的变量
+    Authorization: Bearer ${token}
+  validate:
+    - eq: [$.code, 0]
 ```
 
-### 数据库操作
+### 7.2 多级依赖
 
-#### 前置数据准备（db_setup）
+```yaml
+- name: 创建部门
+  method: POST
+  url: /api/departments
+  headers: {Authorization: Bearer ${token}}
+  body: {name: "测试部门"}
+  extract:
+    dept_id: $.data.id
+  validate:
+    - eq: [$.code, 0]
+
+- name: 在该部门下创建用户
+  method: POST
+  url: /api/users
+  headers: {Authorization: Bearer ${token}}
+  body:
+    name: "张三"
+    department_id: ${dept_id}
+  extract:
+    user_id: $.data.id
+  validate:
+    - eq: [$.code, 0]
+
+- name: 查询该用户
+  method: GET
+  url: /api/users/${user_id}
+  headers: {Authorization: Bearer ${token}}
+  validate:
+    - eq: [$.data.name, "张三"]
+    - eq: [$.data.department_id, ${dept_id}]
+```
+
+### 7.3 JSONPath 常用语法
+
+| 表达式 | 含义 |
+|--------|------|
+| `$.code` | 根级 code 字段 |
+| `$.data.token` | data 下的 token |
+| `$.data.list[0].id` | 列表第一个元素的 id |
+| `$.data.list[-1].name` | 列表最后一个元素的 name |
+
+---
+
+## 8. 数据库操作
+
+需要在 `config/{env}.yaml` 中配置 `database` 字段。
+
+### 8.1 前置数据准备
 
 ```yaml
 - name: 测试删除用户
   db_setup:
-    - sql: "INSERT INTO users (id, name) VALUES (9999, 'test_user')"
+    - sql: "INSERT INTO users (id, username, status) VALUES (9999, 'test_user', 1)"
+    - sql: "INSERT INTO user_roles (user_id, role_id) VALUES (9999, 2)"
   method: DELETE
   url: /api/users/9999
+  headers: {Authorization: Bearer ${token}}
   validate:
     - eq: [$.code, 0]
   db_teardown:
+    - sql: "DELETE FROM user_roles WHERE user_id = 9999"
     - sql: "DELETE FROM users WHERE id = 9999"
 ```
 
-#### 数据库校验（db_extract）
+### 8.2 数据库校验
 
 ```yaml
 - name: 创建订单后验证数据库
   method: POST
   url: /api/orders
-  body:
-    product_id: 100
+  body: {product_id: 100, quantity: 1}
   extract:
     order_id: $.data.order_id
   db_extract:
-    - sql: "SELECT status FROM orders WHERE id = ${order_id}"
+    - sql: "SELECT status, total_price FROM orders WHERE id = ${order_id}"
       extract:
         db_status: status
+        db_price: total_price
   validate:
     - eq: [$.code, 0]
     - eq: [${db_status}, "pending"]
+    - gt: [${db_price}, 0]
 ```
 
-### Hook 扩展
+### 8.3 参数化 SQL（防注入）
 
-在 `hooks/custom_hooks.py` 中定义函数，用例中通过 `hook` 字段调用：
+```yaml
+db_setup:
+  - sql: "INSERT INTO users (id, name) VALUES (%s, %s)"
+    params: [9999, "test_user"]
+```
+
+### 8.4 注意事项
+
+- `db_teardown` 即使用例失败也会执行（类似 finally），确保测试数据被清理
+- 如果 `db_setup` 中多条 SQL 执行一半失败，已执行的 SQL 会被自动 rollback
+- 不需要数据库功能时，把 config 中的 `database` 配置删掉即可
+
+---
+
+## 9. Hook 扩展
+
+当标准功能无法满足需求时（如请求体加密、响应解密、自定义签名），可以使用 Hook。
+
+### 9.1 编写 Hook
+
+在 `hooks/` 目录下创建 `.py` 文件：
 
 ```python
 # hooks/custom_hooks.py
-def encrypt_body(request_data):
-    # request_data = {"method": ..., "url": ..., "headers": ..., "body": ...}
-    request_data["body"]["sign"] = calculate_sign(request_data["body"])
+import hashlib
+import json
+
+
+def add_sign(request_data):
+    """请求前：计算签名并添加到 body。
+
+    参数 request_data 格式:
+    {
+        "method": "POST",
+        "url": "https://api.example.com/api/pay",
+        "headers": {"Content-Type": "application/json"},
+        "body": {"order_id": "123"}
+    }
+
+    必须返回修改后的 dict。
+    """
+    body = request_data.get("body", {})
+    sign = hashlib.md5(json.dumps(body, sort_keys=True).encode()).hexdigest()
+    body["sign"] = sign
+    request_data["body"] = body
     return request_data
+
+
+def extract_real_data(response):
+    """响应后：解密响应体。
+
+    参数 response 格式:
+    {
+        "status_code": 200,
+        "body": {...},
+        "headers": {...},
+        "elapsed_ms": 128.5,
+        "error": None
+    }
+
+    必须返回修改后的 dict。
+    """
+    # 示例：假设 body.data 是加密的，这里解密
+    if response.get("body", {}).get("encrypted_data"):
+        response["body"]["data"] = decrypt(response["body"]["encrypted_data"])
+    return response
 ```
 
+### 9.2 在用例中使用 Hook
+
 ```yaml
-- name: 需要签名的接口
+- name: 需要签名的支付接口
   method: POST
   url: /api/pay
   body:
     order_id: "12345"
+    amount: 99.9
   hook:
-    before: encrypt_body     # 请求前调用
-    after: decrypt_response  # 响应后调用（可选）
+    before: add_sign              # 请求前调用
+    after: extract_real_data      # 响应后调用
   validate:
     - eq: [$.code, 0]
 ```
 
-### Excel 格式用例
+### 9.3 Hook 注意事项
 
-Excel 文件的 Sheet 名称作为模块名，第一行为表头：
-
-| name | method | url | headers | body | extract | validate |
-|------|--------|-----|---------|------|---------|----------|
-| 登录成功 | POST | /api/login | | {"username":"admin"} | {"token":"$.data.token"} | [{"eq":["$.code",0]}] |
-
-headers/body/extract/validate 列使用 JSON 字符串。
+- Hook 函数必须接收一个 dict 参数并返回修改后的 dict
+- 只有在 hooks 文件中**直接定义**的函数才会被注册（import 的第三方函数不会）
+- 文件名以 `_` 开头的会被忽略（如 `_helpers.py`）
+- Hook 函数如果抛出异常，用例会标记为失败并记录错误信息
 
 ---
 
-## 报告
+## 10. 运行与命令行参数
 
-### Allure 报告
+### 基本语法
 
 ```bash
-python run.py --report allure
-# 查看报告：
-allure serve reports/allure-results
+python3 run.py [--env ENV] [--path PATH] [--report REPORT]
 ```
+
+### 参数说明
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--env` | config.yaml 中的 `current_env` | 选择环境 |
+| `--path` | `testcases` | 用例路径（目录或文件） |
+| `--report` | config.yaml 中的 `report_type` | 报告类型 |
+
+### 常用场景
+
+```bash
+# 日常开发：只跑一个模块
+python3 run.py --path testcases/login/ --report html
+
+# 提测前：全量回归
+python3 run.py --report both
+
+# 切环境
+python3 run.py --env staging
+
+# CI 中使用
+python3 run.py --env test --report allure
+```
+
+---
+
+## 11. 测试报告
 
 ### HTML 报告
 
 ```bash
-python run.py --report html
-# 报告生成在 reports/report.html
+python3 run.py --report html
+# 报告在 reports/report.html
 ```
+
+简单轻量，用浏览器直接打开即可查看。
+
+### Allure 报告
+
+```bash
+# 1. 运行测试（生成数据）
+python3 run.py --report allure
+
+# 2. 启动 Allure 服务查看（需要先安装 Allure CLI）
+allure serve reports/allure-results
+
+# 安装 Allure CLI:
+# macOS:    brew install allure
+# Linux:    sudo apt install allure 或从 GitHub 下载
+# Windows:  scoop install allure
+```
+
+Allure 报告支持：
+- 按模块/用例分组展示
+- 用例优先级标记（level 字段）
+- 请求/响应详情
+- 趋势图（多次运行对比）
 
 ---
 
-## 邮件通知
+## 12. 日志系统
 
-在 `config/config.yaml` 中配置：
+每次运行自动在 `logs/` 目录生成日期命名的日志文件：
+
+```
+logs/2026-04-11.log
+```
+
+日志内容示例：
+
+```
+2026-04-11 10:30:15 [INFO] ========== 用户登录 > 登录成功 ==========
+2026-04-11 10:30:15 [INFO] → POST https://api.example.com/api/login
+2026-04-11 10:30:15 [INFO] → Headers: {"Content-Type": "application/json"}
+2026-04-11 10:30:15 [INFO] → Body: {"username": "admin", "password": "***"}
+2026-04-11 10:30:15 [INFO] ← Status: 200 | Time: 128ms
+2026-04-11 10:30:15 [INFO] ← Response: {"code": 0, "data": {"token": "eyJ..."}}
+2026-04-11 10:30:15 [INFO] Extract: token = eyJ...
+2026-04-11 10:30:15 [INFO] Validate: eq PASS
+```
+
+日志同时输出到控制台和文件，文件保留最近 7 天。
+
+---
+
+## 13. 邮件通知
+
+### 配置
+
+编辑 `config/config.yaml`：
 
 ```yaml
 email:
-  enabled: true
-  smtp_host: smtp.qq.com
-  smtp_port: 465
-  sender: your_email@qq.com
-  password: your_smtp_password
-  receivers:
-    - receiver1@company.com
-    - receiver2@company.com
-  send_on: fail    # always=每次发送 / fail=失败时发送 / never=不发送
+  enabled: true                     # 开启
+  smtp_host: smtp.qq.com            # SMTP 服务器
+  smtp_port: 465                    # SSL 端口
+  sender: your_email@qq.com         # 发件人
+  password: your_smtp_auth_code     # SMTP 授权码（不是登录密码！）
+  receivers:                        # 收件人
+    - test_lead@company.com
+    - dev@company.com
+  send_on: fail                     # always=每次 / fail=仅失败 / never=不发
+```
+
+### 获取 SMTP 授权码
+
+- **QQ 邮箱**：设置 → 帐户 → POP3/IMAP/SMTP 服务 → 开启 → 生成授权码
+- **163 邮箱**：设置 → POP3/SMTP/IMAP → 开启 → 设置授权码
+- **企业邮箱**：咨询公司 IT 部门获取 SMTP 配置
+
+### 邮件内容
+
+```
+主题：[autotest] 测试报告 - test环境 - 2026-04-11 10:30
+
+测试环境：test
+执行时间：2026-04-11 10:30
+────────────────────────────
+总用例：58
+通过：55
+失败：2
+跳过：1
+通过率：94.8%
+耗时：32s
+
+失败用例：
+  1. 用户管理 > 删除用户 - eq: $.code actual=500 expect=0
+  2. 订单模块 > 创建订单 - Request error: Timeout
+```
+
+HTML 报告会作为附件一并发送。
+
+---
+
+## 14. CI/CD 集成
+
+### Jenkins
+
+项目内置 `Jenkinsfile`，支持参数化构建：
+
+1. 在 Jenkins 中创建 Pipeline 项目
+2. Pipeline 选择 "Pipeline script from SCM"
+3. 指向项目仓库，脚本路径填 `Jenkinsfile`
+4. 构建时可选择：环境、用例路径、报告类型
+
+### GitLab CI
+
+项目内置 `.gitlab-ci.yml`：
+
+1. 将项目推送到 GitLab
+2. CI 自动触发（或手动触发）
+3. 报告和日志自动归档为 Artifact（保留 7 天）
+
+### 自定义 CI
+
+核心命令：
+
+```bash
+pip install -r requirements.txt
+python run.py --env $ENV --path testcases/ --report allure
+```
+
+退出码：`0` = 全部通过，`1` = 有失败，可直接用于 CI 判断。
+
+---
+
+## 15. 与被测系统集成
+
+### 15.1 你需要知道的信息
+
+在开始编写用例之前，你需要从开发人员或接口文档中获取以下信息：
+
+| 信息 | 说明 | 填到哪里 |
+|------|------|----------|
+| 接口基础地址 | 如 `https://api.example.com` | `config/{env}.yaml` 的 `base_url` |
+| 接口路径 | 如 `/api/v1/login` | 用例的 `url` 字段 |
+| 请求方法 | GET / POST / PUT / DELETE | 用例的 `method` 字段 |
+| 请求头 | 如 Content-Type、Authorization | 用例的 `headers` 或全局 `global_headers` |
+| 请求体格式 | JSON body | 用例的 `body` 字段 |
+| 响应体格式 | 如 `{"code": 0, "data": {...}}` | 用于编写 `validate` 和 `extract` |
+| 鉴权方式 | Token / Cookie / API Key | 用例中提取并传递 |
+| 测试账号 | 用户名、密码 | `config/{env}.yaml` 的 `global_variables` |
+| 数据库信息 | 地址、账号（可选） | `config/{env}.yaml` 的 `database` |
+
+### 15.2 典型集成步骤
+
+```
+1. 获取接口文档（Swagger/Postman/内部文档）
+     ↓
+2. 在 config/{env}.yaml 中配置 base_url 和账号
+     ↓
+3. 用 Postman 手动调一遍接口，确认请求和响应格式
+     ↓
+4. 按模块创建 testcases/{module}/{module}.yaml
+     ↓
+5. 编写用例（参照 Postman 中的请求，把参数和断言写进 YAML）
+     ↓
+6. 运行测试，查看日志修正 JSONPath / 断言
+     ↓
+7. 集成到 CI/CD
+```
+
+### 15.3 不同鉴权方式的处理
+
+**Bearer Token（最常见）：**
+
+```yaml
+# 先登录提取 token
+- name: 登录
+  method: POST
+  url: /api/login
+  body: {username: ${admin_user}, password: ${admin_pass}}
+  extract:
+    token: $.data.token
+
+# 后续接口带上 token
+- name: 业务接口
+  headers:
+    Authorization: Bearer ${token}
+```
+
+**Cookie 鉴权：**
+
+框架目前不自动管理 Cookie。可以通过 extract 提取 Set-Cookie，再手动设置到 headers 中。
+
+**API Key：**
+
+```yaml
+# 在 config 的 global_variables 中配置
+global_variables:
+  api_key: your_api_key_here
+
+# 用例中引用
+- name: 调用接口
+  headers:
+    X-API-Key: ${api_key}
+```
+
+### 15.4 处理不同的响应格式
+
+**标准 JSON 响应 `{"code": 0, "data": {...}}`：**
+
+```yaml
+validate:
+  - eq: [$.code, 0]
+  - not_null: [$.data.id]
+```
+
+**分页列表 `{"code": 0, "data": {"list": [...], "total": 100}}`：**
+
+```yaml
+validate:
+  - eq: [$.code, 0]
+  - gt: [$.data.total, 0]
+  - not_null: [$.data.list[0].id]
+```
+
+**嵌套结构 `{"result": {"status": "ok", "payload": {"user": {"name": "test"}}}}`：**
+
+```yaml
+validate:
+  - eq: [$.result.status, "ok"]
+  - eq: [$.result.payload.user.name, "test"]
 ```
 
 ---
 
-## 目录说明
+## 16. 常见问题
 
-```
-autotest/
-├── config/          # 环境配置（需要修改）
-├── testcases/       # 测试用例（需要编写）
-├── hooks/           # 自定义扩展函数（按需编写）
-├── common/          # 框架核心代码（无需修改）
-├── reports/         # 报告输出（自动生成）
-├── logs/            # 日志输出（自动生成）
-├── run.py           # 运行入口
-└── conftest.py      # pytest 配置
+### Q: 如何跳过某些用例？
+
+暂不支持用例级别的 skip。可以通过 `--path` 指定只运行部分目录/文件来实现。
+
+### Q: 能否上传文件？
+
+当前版本仅支持 JSON body。文件上传（multipart/form-data）需要通过 Hook 扩展实现。
+
+### Q: 如何处理需要等待的异步接口？
+
+目前不支持内置等待/轮询。可以通过 Hook 实现：
+
+```python
+# hooks/custom_hooks.py
+import time
+
+def wait_for_result(response):
+    """轮询等待异步任务完成"""
+    import requests
+    task_id = response["body"]["data"]["task_id"]
+    for _ in range(10):
+        time.sleep(1)
+        resp = requests.get(f"https://api.example.com/tasks/{task_id}")
+        if resp.json()["data"]["status"] == "done":
+            response["body"]["data"]["status"] = "done"
+            return response
+    return response
 ```
 
-日常使用只需关注 `config/`、`testcases/`、`hooks/` 三个目录。
+### Q: 支持 HTTPS 证书验证吗？
+
+当前使用 requests 库的默认行为（验证 SSL 证书）。如果被测系统使用自签名证书，可以通过 Hook 关闭验证（不推荐在生产环境使用）。
+
+### Q: 如何在团队中共享用例？
+
+将整个项目提交到 Git 仓库。团队成员拉取后只需修改 `config/{env}.yaml` 中的环境配置即可运行。建议把包含真实密码的配置文件加入 `.gitignore`，通过环境变量或内部文档分发。
+
+### Q: 用例执行顺序是怎样的？
+
+- 同一文件内：按 YAML 中的顺序从上到下
+- 不同文件间：按文件路径字母序（pytest 默认行为）
+- 可以通过 `--path` 参数控制只运行特定目录或文件

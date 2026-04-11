@@ -35,7 +35,7 @@ common/              # Core framework modules (DO NOT modify for normal use)
 config/              # Environment configs (config.yaml + per-env files)
 testcases/           # Test case data files (YAML/JSON/Excel)
 hooks/               # User-defined hook functions
-tests/               # Unit tests (79 tests, 96% coverage)
+tests/               # Unit tests (86 tests, 92% coverage)
 conftest.py          # pytest integration: auto-discovery, execution, stats, allure
 run.py               # CLI entry point (--env, --path, --report)
 ```

@@ -13,200 +13,63 @@
 - **邮件通知** — 测试完成后自动发送结果邮件
 - **CI/CD 集成** — 提供 Jenkinsfile 和 GitLab CI 配置
 
-## 快速开始
+## 环境要求
 
-### 安装
+- Python 3.10 或更高版本
+- pip 包管理器
+- (可选) Allure 命令行工具 — 查看 Allure 报告需要安装 [Allure CLI](https://docs.qameta.io/allure/#_installing_a_commandline)
+- (可选) MySQL 数据库 — 仅在使用 `db_setup` / `db_extract` / `db_teardown` 时需要
+
+## 30 秒快速体验
 
 ```bash
+# 1. 克隆项目
+git clone <your-repo-url> && cd autotest
+
+# 2. 安装依赖
 pip install -r requirements.txt
-```
 
-### 配置环境
+# 3. 修改接口地址（改成你的被测系统地址）
+#    编辑 config/test.yaml 中的 base_url
 
-编辑 `config/config.yaml`：
-
-```yaml
-current_env: test    # 选择环境
-```
-
-编辑 `config/test.yaml`：
-
-```yaml
-base_url: https://your-api.example.com
-global_variables:
-  admin_user: your_username
-  admin_pass: your_password
-```
-
-### 编写用例
-
-在 `testcases/` 下创建 YAML 文件：
-
-```yaml
-module: 用户登录
-testcases:
-  - name: 登录成功
-    method: POST
-    url: /api/login
-    body:
-      username: ${admin_user}
-      password: ${admin_pass}
-    extract:
-      token: $.data.token
-    validate:
-      - eq: [status_code, 200]
-      - eq: [$.code, 0]
-      - not_null: [$.data.token]
-
-  - name: 密码错误
-    method: POST
-    url: /api/login
-    body:
-      username: ${admin_user}
-      password: wrong
-    validate:
-      - eq: [$.code, 1001]
-      - contains: [$.msg, "密码错误"]
-```
-
-### 运行
-
-```bash
-python run.py                                    # 运行全部用例
-python run.py --env dev                          # 指定环境
-python run.py --path testcases/login/            # 指定用例路径
-python run.py --report both                      # 同时生成 Allure + HTML 报告
-python run.py --env staging --report allure      # 组合使用
-```
-
-## 用例格式
-
-### 断言关键字
-
-| 关键字 | 说明 | 示例 |
-|--------|------|------|
-| `eq` | 等于 | `eq: [$.code, 0]` |
-| `neq` | 不等于 | `neq: [$.code, -1]` |
-| `gt` / `lt` | 大于 / 小于 | `gt: [$.data.total, 0]` |
-| `gte` / `lte` | 大于等于 / 小于等于 | `gte: [status_code, 200]` |
-| `contains` | 包含 | `contains: [$.msg, "成功"]` |
-| `not_null` | 不为空 | `not_null: [$.data.token]` |
-| `type` | 类型校验 | `type: [$.data.id, int]` |
-| `length` | 长度校验 | `length: [$.data.list, 10]` |
-
-### 接口依赖
-
-```yaml
-- name: 登录
-  method: POST
-  url: /api/login
-  body: {username: admin, password: "123456"}
-  extract:
-    token: $.data.token       # 提取 token
-
-- name: 查询用户
-  method: GET
-  url: /api/users
-  headers:
-    Authorization: Bearer ${token}   # 引用 token
-```
-
-### 数据库操作
-
-```yaml
-- name: 测试删除用户
-  db_setup:
-    - sql: "INSERT INTO users (id, name) VALUES (9999, 'test_user')"
-  method: DELETE
-  url: /api/users/9999
-  validate:
-    - eq: [$.code, 0]
-  db_teardown:
-    - sql: "DELETE FROM users WHERE id = 9999"
-```
-
-### Hook 扩展
-
-```python
-# hooks/custom_hooks.py
-def encrypt_body(request_data):
-    request_data["body"]["sign"] = calculate_sign(request_data["body"])
-    return request_data
-```
-
-```yaml
-- name: 需要签名的接口
-  method: POST
-  url: /api/pay
-  body: {order_id: "123"}
-  hook:
-    before: encrypt_body
-```
-
-### Excel 格式
-
-Sheet 名作为模块名，第一行为表头：
-
-| name | method | url | headers | body | extract | validate |
-|------|--------|-----|---------|------|---------|----------|
-| 登录成功 | POST | /api/login | | {"username":"admin"} | {"token":"$.data.token"} | [{"eq":["$.code",0]}] |
-
-## 报告
-
-```bash
-# Allure 报告
-python run.py --report allure
-allure serve reports/allure-results
-
-# HTML 报告
+# 4. 编写你的第一个用例（或先用示例用例跑一下）
 python run.py --report html
-# 查看 reports/report.html
+
+# 5. 查看报告
+open reports/report.html
 ```
 
-## 邮件通知
-
-在 `config/config.yaml` 中配置：
-
-```yaml
-email:
-  enabled: true
-  smtp_host: smtp.qq.com
-  smtp_port: 465
-  sender: your@qq.com
-  password: your_smtp_password
-  receivers:
-    - dev@company.com
-  send_on: fail    # always / fail / never
-```
+更详细的上手教程见 [docs/quickstart.md](docs/quickstart.md)，完整使用手册见 [docs/usage.md](docs/usage.md)。
 
 ## 项目结构
 
 ```
 autotest/
-├── config/          # 环境配置 ← 需要修改
-├── testcases/       # 测试用例 ← 需要编写
-├── hooks/           # Hook 扩展 ← 按需编写
-├── common/          # 框架核心（无需修改）
-├── tests/           # 单元测试（79个，覆盖率96%）
+├── config/          # 环境配置 ← 需要修改（接口地址、账号、数据库）
+│   ├── config.yaml  #   主配置（选择环境、超时、邮件）
+│   ├── test.yaml    #   test 环境配置
+│   ├── dev.yaml     #   dev 环境配置
+│   ├── staging.yaml #   staging 环境配置
+│   └── prod.yaml    #   prod 环境配置
+├── testcases/       # 测试用例 ← 需要编写（YAML/JSON/Excel）
+├── hooks/           # Hook 扩展 ← 按需编写（加密、签名等）
+├── common/          # 框架核心代码（无需修改）
+├── tests/           # 框架单元测试（86个，覆盖率92%）
 ├── reports/         # 报告输出（自动生成）
 ├── logs/            # 日志输出（自动生成）
 ├── run.py           # 运行入口
 ├── conftest.py      # pytest 配置
 ├── Jenkinsfile      # Jenkins 流水线
 ├── .gitlab-ci.yml   # GitLab CI
-└── requirements.txt # 依赖
+└── requirements.txt # Python 依赖
 ```
 
-## CI/CD
+**日常使用只需关注 3 个目录：`config/`、`testcases/`、`hooks/`**
 
-### Jenkins
+## 文档索引
 
-内置 `Jenkinsfile`，支持参数化构建（环境 / 用例路径 / 报告类型）。
-
-### GitLab CI
-
-内置 `.gitlab-ci.yml`，自动执行测试并归档报告（7天过期）。
-
-## 详细文档
-
-完整使用指南见 [docs/usage.md](docs/usage.md)。
+| 文档 | 内容 |
+|------|------|
+| [docs/quickstart.md](docs/quickstart.md) | 新手入门教程（从零开始，手把手完成第一个用例） |
+| [docs/usage.md](docs/usage.md) | 完整使用手册（所有功能、配置项、高级用法） |
+| CLAUDE.md | AI 开发助手上下文（仅开发者需要） |
