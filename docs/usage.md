@@ -15,13 +15,16 @@
 7. [接口依赖与数据传递](#7-接口依赖与数据传递)
 8. [数据库操作](#8-数据库操作)
 9. [Hook 扩展](#9-hook-扩展)
-10. [运行与命令行参数](#10-运行与命令行参数)
-11. [测试报告](#11-测试报告)
-12. [日志系统](#12-日志系统)
-13. [邮件通知](#13-邮件通知)
-14. [CI/CD 集成](#14-cicd-集成)
-15. [与被测系统集成](#15-与被测系统集成)
-16. [常见问题](#16-常见问题)
+10. [优先级过滤](#10-优先级过滤)
+11. [并行执行](#11-并行执行)
+12. [运行与命令行参数](#12-运行与命令行参数)
+13. [测试报告](#13-测试报告)
+14. [日志系统](#14-日志系统)
+15. [邮件通知](#15-邮件通知)
+16. [飞书通知](#16-飞书通知)
+17. [CI/CD 集成](#17-cicd-集成)
+18. [与被测系统集成](#18-与被测系统集成)
+19. [常见问题](#19-常见问题)
 
 ---
 
@@ -482,10 +485,48 @@ db_setup:
     params: [9999, "test_user"]
 ```
 
-### 8.4 注意事项
+### 8.4 db_setup 中生成变量（SQL 生成数据供后续使用）
+
+`db_setup` 中的 SQL 也可以带 `extract`，提取查询结果作为变量。后续 SQL 和接口请求都可以引用这些变量。
+
+典型场景：自动生成手机号，后续 SQL 和接口都用这个手机号。
+
+```yaml
+- name: 注册新用户
+  db_setup:
+    # 第一条 SQL：生成随机手机号并提取
+    - sql: "SELECT CONCAT('138', LPAD(FLOOR(RAND()*100000000), 8, '0')) AS phone"
+      extract:
+        phone: phone
+
+    # 第二条 SQL：用提取的手机号插入数据
+    - sql: "INSERT INTO users (phone, name, status) VALUES (%s, %s, 1)"
+      params: ["${phone}", "测试用户"]
+
+    # 第三条 SQL：关联表也用同一个手机号
+    - sql: "INSERT INTO user_accounts (phone, balance) VALUES (%s, 0)"
+      params: ["${phone}"]
+
+  method: POST
+  url: /api/register
+  body:
+    phone: ${phone}           # 接口请求也使用 db_setup 生成的变量
+    code: "123456"
+  validate:
+    - eq: [$.code, 0]
+
+  db_teardown:
+    - sql: "DELETE FROM user_accounts WHERE phone = %s"
+      params: ["${phone}"]
+    - sql: "DELETE FROM users WHERE phone = %s"
+      params: ["${phone}"]
+```
+
+### 8.5 注意事项
 
 - `db_teardown` 即使用例失败也会执行（类似 finally），确保测试数据被清理
 - 如果 `db_setup` 中多条 SQL 执行一半失败，已执行的 SQL 会被自动 rollback
+- `db_setup` 的 `extract` 提取的变量会写入变量池，后续 SQL 的 `${xxx}` 和接口的 URL/body/headers 都可以引用
 - 不需要数据库功能时，把 config 中的 `database` 配置删掉即可
 
 ---
@@ -569,12 +610,110 @@ def extract_real_data(response):
 
 ---
 
-## 10. 运行与命令行参数
+## 10. 优先级过滤
+
+用例可以标记优先级，运行时按优先级筛选，实现冒烟测试 / 核心回归 / 全量回归。
+
+### 10.1 用例中标记优先级
+
+```yaml
+testcases:
+  - name: 核心登录流程
+    level: P0          # 最高优先级（冒烟）
+    method: POST
+    url: /api/login
+    ...
+
+  - name: 密码错误提示
+    level: P1          # 高优先级（核心）
+    ...
+
+  - name: 用户名大小写
+    level: P2          # 普通（不写 level 默认也是 P2）
+    ...
+
+  - name: 特殊字符用户名
+    level: P3          # 次要
+    ...
+```
+
+### 10.2 按优先级运行
+
+```bash
+# 只跑 P0 冒烟用例
+python3 run.py --level P0
+
+# 跑 P0 + P1 核心回归
+python3 run.py --level P0,P1
+
+# 也支持用英文名
+python3 run.py --level blocker,critical
+
+# 不指定 --level 则运行全部用例
+python3 run.py
+```
+
+### 10.3 优先级映射表
+
+| 简写 | 全称 | 含义 | 建议使用场景 |
+|------|------|------|-------------|
+| P0 | blocker | 阻塞级 | 冒烟测试，每次提交必跑 |
+| P1 | critical | 核心功能 | 核心回归，提测前必跑 |
+| P2 | normal | 普通（默认） | 全量回归 |
+| P3 | minor | 次要 | 全量回归 |
+| P4 | trivial | 边缘场景 | 全量回归 |
+
+---
+
+## 11. 并行执行
+
+通过 `--workers` 参数开启多进程并行，加速测试执行。
+
+```bash
+# 4 个进程并行
+python3 run.py --workers 4
+
+# 自动按 CPU 核数
+python3 run.py --workers auto
+
+# 组合使用
+python3 run.py --env test --workers 4 --level P0,P1 --report html
+```
+
+### 11.1 并行规则
+
+| 规则 | 说明 |
+|------|------|
+| 同一 YAML 文件内 | 用例**按顺序执行**（保证变量依赖） |
+| 不同 YAML 文件间 | **并行执行**（各自独立的变量池和数据库连接） |
+| 报告和统计 | 自动聚合所有 worker 的结果 |
+| 不指定 --workers | 单进程顺序执行（默认行为不变） |
+
+### 11.2 并行示例
+
+假设有 4 个用例文件，用 `--workers 2`：
+
+```
+Worker 0:  login.yaml（内部3个用例顺序执行）→ order.yaml（内部5个用例顺序执行）
+Worker 1:  user.yaml（内部4个用例顺序执行） → product.yaml（内部2个用例顺序执行）
+```
+
+两个 Worker 同时运行，总耗时约为单线程的一半。
+
+### 11.3 注意事项
+
+- 并行执行要求不同 YAML 文件之间**无数据依赖**（不共享变量、不操作同一条数据库记录）
+- 如果两个文件需要共享前置数据（如都需要登录 token），应各自在文件内登录
+- 数据库操作要避免不同文件操作同一条记录导致冲突
+
+---
+
+## 12. 运行与命令行参数
 
 ### 基本语法
 
 ```bash
-python3 run.py [--env ENV] [--path PATH] [--report REPORT]
+python3 run.py [--env ENV] [--path PATH] [--report REPORT] [--level LEVEL] [--workers N]
 ```
 
 ### 参数说明
@@ -583,7 +722,9 @@ python3 run.py [--env ENV] [--path PATH] [--report REPORT]
 |------|--------|------|
 | `--env` | config.yaml 中的 `current_env` | 选择环境 |
 | `--path` | `testcases` | 用例路径（目录或文件） |
-| `--report` | config.yaml 中的 `report_type` | 报告类型 |
+| `--report` | config.yaml 中的 `report_type` | 报告类型：allure / html / both |
+| `--level` | 无（运行全部） | 优先级过滤：P0 / P0,P1 / blocker,critical |
+| `--workers` | 无（单进程） | 并行进程数：数字或 auto |
 
 ### 常用场景
 
@@ -591,19 +732,25 @@ python3 run.py [--env ENV] [--path PATH] [--report REPORT]
 # 日常开发：只跑一个模块
 python3 run.py --path testcases/login/ --report html
 
-# 提测前：全量回归
-python3 run.py --report both
+# 冒烟测试
+python3 run.py --level P0 --report html
+
+# 提测前：核心回归 + 并行加速
+python3 run.py --level P0,P1 --workers 4 --report both
+
+# 全量回归
+python3 run.py --workers auto --report both
 
 # 切环境
 python3 run.py --env staging
 
 # CI 中使用
-python3 run.py --env test --report allure
+python3 run.py --env test --workers auto --report allure
 ```
 
 ---
 
-## 11. 测试报告
+## 13. 测试报告
 
 ### HTML 报告
 
@@ -637,7 +784,7 @@ Allure 报告支持：
 
 ---
 
-## 12. 日志系统
+## 14. 日志系统
 
 每次运行自动在 `logs/` 目录生成日期命名的日志文件：
 
@@ -662,7 +809,7 @@ logs/2026-04-11.log
 
 ---
 
-## 13. 邮件通知
+## 15. 邮件通知
 
 ### 配置
 
@@ -711,7 +858,71 @@ HTML 报告会作为附件一并发送。
 
 ---
 
-## 14. CI/CD 集成
+## 16. 飞书通知
+
+支持将测试结果发送到飞书群聊（通过自定义机器人 Webhook）。
+
+### 16.1 创建飞书机器人
+
+1. 打开飞书群 → 设置 → 群机器人 → 添加机器人 → 自定义机器人
+2. 复制 Webhook 地址（格式：`https://open.feishu.cn/open-apis/bot/v2/hook/xxx`）
+
+### 16.2 配置
+
+编辑 `config/config.yaml`：
+
+```yaml
+feishu:
+  enabled: true
+  webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/你的token"
+  send_on: fail           # always=每次 / fail=仅失败时 / never=不发送
+  at_user_ids:            # 失败时 @ 指定用户（可选）
+    - "ou_xxxx"           # 飞书用户的 open_id
+    - "ou_yyyy"
+```
+
+### 16.3 通知效果
+
+**有失败时（红色卡片）：**
+
+```
+┌─────────────────────────────────────────────┐
+│  接口自动化测试报告 - test环境 - 有失败       │
+├─────────────────────────────────────────────┤
+│ 测试环境：test        执行时间：2026-04-17    │
+│ 总用例：58            通过率：94.8%           │
+│ 通过：55 | 失败：2 | 跳过：1    耗时：32s    │
+├─────────────────────────────────────────────┤
+│ 失败用例：                                   │
+│ 1. 用户管理 > 删除用户                        │
+│ 2. 订单模块 > 创建订单                        │
+│ @张三 @李四                                   │
+└─────────────────────────────────────────────┘
+```
+
+**全部通过时（绿色卡片）：** 只显示统计信息，不 @ 人。
+
+### 16.4 与邮件同时使用
+
+邮件和飞书可以同时启用，互不影响：
+
+```yaml
+email:
+  enabled: true
+  ...
+feishu:
+  enabled: true
+  ...
+```
+
+### 16.5 获取用户 open_id
+
+飞书管理后台 → 组织架构 → 点击用户 → 复制 open_id（格式：`ou_xxx`）。
+也可以通过飞书开放平台 API 获取。
+
+---
+
+## 17. CI/CD 集成
 
 ### Jenkins
 
@@ -743,7 +954,7 @@ python run.py --env $ENV --path testcases/ --report allure
 
 ---
 
-## 15. 与被测系统集成
+## 18. 与被测系统集成
 
 ### 15.1 你需要知道的信息
 
@@ -844,7 +1055,7 @@ validate:
 
 ---
 
-## 16. 常见问题
+## 19. 常见问题
 
 ### Q: 如何跳过某些用例？
 

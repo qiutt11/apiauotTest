@@ -295,13 +295,25 @@ python3 run.py --path testcases/login/login.yaml
 python3 run.py --env dev
 python3 run.py --env staging
 
+# 按优先级运行（只跑 P0 冒烟用例）
+python3 run.py --level P0
+
+# 跑 P0 + P1 核心回归
+python3 run.py --level P0,P1
+
+# 并行执行（4个进程）
+python3 run.py --workers 4
+
+# 自动按CPU核数并行
+python3 run.py --workers auto
+
 # 指定报告格式
 python3 run.py --report html      # 生成 HTML 报告
 python3 run.py --report allure    # 生成 Allure 数据
 python3 run.py --report both      # 同时生成两种
 
 # 组合使用
-python3 run.py --env dev --path testcases/login/ --report html
+python3 run.py --env dev --path testcases/login/ --level P0,P1 --workers 4 --report html
 ```
 
 ## 遇到问题？
@@ -328,6 +340,6 @@ python3 run.py --env dev --path testcases/login/ --report html
 
 ## 下一步
 
-- 阅读 [完整使用手册](usage.md) 了解全部功能（断言关键字、数据库操作、Hook 扩展、Excel 格式、邮件通知等）
+- 阅读 [完整使用手册](usage.md) 了解全部功能（优先级过滤、并行执行、数据库操作、Hook 扩展、飞书通知等）
 - 参考 `testcases/` 下的示例用例
 - 对接 CI/CD：项目自带 `Jenkinsfile` 和 `.gitlab-ci.yml`
