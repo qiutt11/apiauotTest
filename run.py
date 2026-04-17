@@ -96,13 +96,17 @@ def main():
     with open(main_stats, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False)
 
-    # Send notification
-    if config.get("email", {}).get("enabled"):
+    # Send notifications (email + feishu)
+    email_cfg = config.get("email", {})
+    feishu_cfg = config.get("feishu", {})
+    send_on = email_cfg.get("send_on", feishu_cfg.get("send_on", "fail"))
+    if email_cfg.get("enabled") or feishu_cfg.get("enabled"):
         maybe_send_notification(
-            email_config=config["email"],
+            email_config=email_cfg,
             stats=stats,
-            send_on=config["email"].get("send_on", "fail"),
+            send_on=send_on,
             report_path=report_path,
+            feishu_config=feishu_cfg,
         )
 
     sys.exit(exit_code)

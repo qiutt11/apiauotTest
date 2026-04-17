@@ -1,7 +1,7 @@
 current_env: test
 timeout: 30
 retry: 0
-report_type: allure
+report_type: html
 
 email:
   enabled: false
@@ -11,3 +11,13 @@ email:
   password: ""
   receivers: []
   send_on: fail
+
+feishu:
+  enabled: false
+  # 飞书自定义机器人 Webhook 地址
+  # 创建方式：飞书群 → 设置 → 群机器人 → 添加机器人 → 自定义机器人 → 复制 webhook 地址
+  webhook_url: ""
+  # 发送时机：always=每次 / fail=仅失败时 / never=不发送
+  send_on: fail
+  # 失败时 @ 指定用户（可选，填飞书 user_id）
+  at_user_ids: []
