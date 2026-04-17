@@ -18,6 +18,8 @@ def main():
     parser.add_argument("--env", default=None, help="Test environment (dev/test/staging/prod)")
     parser.add_argument("--path", default="testcases", help="Test case path (directory or file)")
     parser.add_argument("--report", default=None, help="Report type: allure / html / both")
+    parser.add_argument("--level", default=None,
+                        help="Filter by priority: P0,P1 or blocker,critical (comma-separated)")
     args = parser.parse_args()
 
     # Load config for email settings
@@ -43,6 +45,8 @@ def main():
         pytest_args.extend(["--env", args.env])
     if args.report:
         pytest_args.extend(["--report", args.report])
+    if args.level:
+        pytest_args.extend(["--level", args.level])
 
     # Run tests
     start_time = time.time()

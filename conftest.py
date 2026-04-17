@@ -20,6 +20,8 @@ def pytest_addoption(parser):
     parser.addoption("--env", default=None, help="Test environment (dev/test/staging/prod)")
     parser.addoption("--path", default="testcases", help="Test case directory or file path")
     parser.addoption("--report", default=None, help="Report type (allure/html/both)")
+    parser.addoption("--level", default=None,
+                     help="Filter by priority level, comma-separated (e.g., P0,P1 or blocker,critical)")
 
 
 def pytest_configure(config):
@@ -69,11 +71,39 @@ def pytest_collect_file(parent, file_path):
             return TestCaseFile.from_parent(parent, path=file_path)
 
 
+# Level aliases: P0/P1/P2/P3/P4 map to standard severity names
+LEVEL_ALIASES = {
+    "p0": "blocker",
+    "p1": "critical",
+    "p2": "normal",
+    "p3": "minor",
+    "p4": "trivial",
+}
+
+
 class TestCaseFile(pytest.File):
     def collect(self):
         data = load_testcases(str(self.path))
         module_name = data.get("module", self.path.stem)
+
+        # Parse --level filter
+        level_filter = self.config.getoption("--level", default=None)
+        allowed_levels = None
+        if level_filter:
+            raw_levels = [l.strip().lower() for l in level_filter.split(",")]
+            # Normalize: expand aliases (P0→blocker) and keep originals
+            allowed_levels = set()
+            for l in raw_levels:
+                allowed_levels.add(LEVEL_ALIASES.get(l, l))
+
         for i, case in enumerate(data.get("testcases", [])):
+            # Filter by level if --level is specified
+            if allowed_levels is not None:
+                case_level = case.get("level", "normal").lower()
+                normalized = LEVEL_ALIASES.get(case_level, case_level)
+                if normalized not in allowed_levels:
+                    continue
+
             name = case.get("name", f"case_{i}")
             yield TestCaseItem.from_parent(
                 self, name=name, callobj=case, module_name=module_name
