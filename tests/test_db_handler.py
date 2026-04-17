@@ -29,11 +29,33 @@ def test_execute_setup_sql(mock_connect):
     mock_conn, mock_cursor = _setup_mock_cursor(mock_connect)
 
     handler = DBHandler(_make_db_config())
-    handler.execute_setup([
+    result = handler.execute_setup([
         {"sql": "INSERT INTO users (id, name) VALUES (1, 'test')"},
         {"sql": "INSERT INTO roles (id, name) VALUES (1, 'admin')"},
     ])
 
+    assert result == {}  # No extract, returns empty dict
+    assert mock_cursor.execute.call_count == 2
+    mock_conn.commit.assert_called()
+    handler.close()
+
+
+@patch("common.db_handler.pymysql.connect")
+def test_execute_setup_with_extract(mock_connect):
+    """db_setup should support extract to capture generated data."""
+    mock_conn, mock_cursor = _setup_mock_cursor(mock_connect)
+    mock_cursor.fetchone.return_value = {"phone": "13812345678"}
+
+    handler = DBHandler(_make_db_config())
+    result = handler.execute_setup([
+        {
+            "sql": "SELECT CONCAT('138', LPAD(FLOOR(RAND()*100000000), 8, '0')) AS phone",
+            "extract": {"phone": "phone"},
+        },
+        {"sql": "INSERT INTO users (phone, name) VALUES (%s, %s)", "params": ["13812345678", "test"]},
+    ])
+
+    assert result == {"phone": "13812345678"}
     assert mock_cursor.execute.call_count == 2
     mock_conn.commit.assert_called()
     handler.close()

@@ -135,6 +135,7 @@ def test_run_testcase_with_db_setup_and_teardown(mock_send):
 
     pool = VariablePool()
     mock_db = MagicMock()
+    mock_db.execute_setup.return_value = {}  # No extract
     case = {
         "name": "DB测试",
         "method": "DELETE",
@@ -148,6 +149,40 @@ def test_run_testcase_with_db_setup_and_teardown(mock_send):
     assert result["passed"] is True
     mock_db.execute_setup.assert_called_once()
     mock_db.execute_teardown.assert_called_once()
+
+
+@patch("common.runner.send_request")
+def test_run_testcase_with_db_setup_extract(mock_send):
+    """db_setup with extract should inject variables into pool and re-resolve request."""
+    mock_send.return_value = {
+        "status_code": 200,
+        "body": {"code": 0},
+        "headers": {},
+        "elapsed_ms": 50,
+        "error": None,
+    }
+
+    pool = VariablePool()
+    mock_db = MagicMock()
+    mock_db.execute_setup.return_value = {"phone": "13800001111"}
+    case = {
+        "name": "DB Setup提取",
+        "method": "POST",
+        "url": "/api/register",
+        "body": {"phone": "${phone}"},
+        "db_setup": [
+            {"sql": "SELECT '13800001111' AS phone", "extract": {"phone": "phone"}},
+            {"sql": "INSERT INTO users (phone) VALUES (%s)", "params": ["${phone}"]},
+        ],
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30, db_handler=mock_db)
+
+    assert result["passed"] is True
+    assert pool.get("phone") == "13800001111"
+    # Verify the request body was re-resolved with the extracted phone
+    call_kwargs = mock_send.call_args[1]
+    assert call_kwargs["body"]["phone"] == "13800001111"
 
 
 @patch("common.runner.send_request")

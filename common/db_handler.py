@@ -22,16 +22,27 @@ class DBHandler:
             raise RuntimeError("DBHandler has been closed")
         self._conn.ping(reconnect=True)
 
-    def execute_setup(self, sql_list: list[dict]):
+    def execute_setup(self, sql_list: list[dict]) -> dict[str, Any]:
+        """Execute setup SQLs. Returns extracted variables from SQLs that have 'extract'.
+
+        Each SQL item can optionally have an 'extract' dict to capture query results.
+        This allows earlier SQLs to generate data that later SQLs reference.
+        """
         self._ensure_connection()
+        extracted = {}
         try:
             with self._conn.cursor() as cursor:
                 for item in sql_list:
                     cursor.execute(item["sql"], item.get("params"))
+                    if item.get("extract"):
+                        row = cursor.fetchone()
+                        for var_name, column_name in item["extract"].items():
+                            extracted[var_name] = row[column_name] if row else None
             self._conn.commit()
         except Exception:
             self._conn.rollback()
             raise
+        return extracted
 
     def execute_teardown(self, sql_list: list[dict]):
         self._ensure_connection()

@@ -34,11 +34,28 @@ def run_testcase(
     body = resolved["body"]
 
     try:
-        # 2. Execute db_setup
+        # 2. Execute db_setup (resolve each SQL individually so earlier extracts feed later SQLs)
+        setup_vars = {}
         if db_handler and case.get("db_setup"):
             try:
-                db_setup_resolved = pool.resolve(case["db_setup"])
-                db_handler.execute_setup(db_setup_resolved)
+                resolved_sql_list = []
+                for sql_item in case["db_setup"]:
+                    resolved_item = pool.resolve(sql_item)
+                    resolved_sql_list.append(resolved_item)
+                setup_vars = db_handler.execute_setup(resolved_sql_list)
+                for k, v in setup_vars.items():
+                    pool.set_module(k, v)
+                # Re-resolve request fields in case db_setup extracted variables used in URL/body
+                resolved = pool.resolve({
+                    "method": case.get("method", "GET"),
+                    "url": case.get("url", ""),
+                    "headers": case.get("headers", {}),
+                    "body": case.get("body"),
+                })
+                method = resolved["method"]
+                url = base_url + resolved["url"]
+                headers = {**(global_headers or {}), **resolved["headers"]}
+                body = resolved["body"]
             except Exception as e:
                 _logger.error(f"db_setup failed: {e}")
                 return {
