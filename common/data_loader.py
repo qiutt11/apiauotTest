@@ -1,3 +1,14 @@
+"""用例数据加载模块。
+
+支持从三种格式加载测试用例数据：
+    - YAML（推荐）：可读性强，支持注释
+    - JSON：与接口数据格式一致
+    - Excel：适合业务人员批量管理
+
+所有格式统一返回：
+    {"module": "模块名", "testcases": [用例1, 用例2, ...]}
+"""
+
 import json
 import os
 from typing import Any
@@ -7,6 +18,17 @@ from openpyxl import load_workbook
 
 
 def load_testcases(file_path: str) -> dict[str, Any]:
+    """根据文件扩展名自动选择加载器，返回标准化的用例数据。
+
+    Args:
+        file_path: 用例文件路径（.yaml/.yml/.json/.xlsx）
+
+    Returns:
+        {"module": "模块名", "testcases": [用例字典列表]}
+
+    Raises:
+        ValueError: 不支持的文件格式
+    """
     ext = os.path.splitext(file_path)[1].lower()
     if ext in (".yaml", ".yml"):
         return _load_yaml(file_path)
@@ -19,50 +41,75 @@ def load_testcases(file_path: str) -> dict[str, Any]:
 
 
 def _load_yaml(file_path: str) -> dict:
+    """加载 YAML 格式的用例文件。"""
     with open(file_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        return yaml.safe_load(f) or {}  # 空文件返回 {} 而非 None
 
 
 def _load_json(file_path: str) -> dict:
+    """加载 JSON 格式的用例文件。"""
     with open(file_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def _load_excel(file_path: str) -> dict:
+    """加载 Excel 格式的用例文件。
+
+    规则：
+        - Sheet 名称作为模块名（module）
+        - 第一行为表头（name, method, url, headers, body, extract, validate 等）
+        - 每行一个用例
+        - headers/body/extract/validate 等字段需要填写 JSON 字符串
+        - 空列头（None）自动跳过
+        - 完全空的行自动跳过
+    """
     wb = load_workbook(file_path, read_only=True)
     try:
         ws = wb.active
-        module_name = ws.title
+        module_name = ws.title  # Sheet 名作为模块名
 
         rows = list(ws.iter_rows(values_only=True))
         if len(rows) < 2:
             return {"module": module_name, "testcases": []}
 
+        # 解析表头（跳过 None 列头）
         headers = [str(h).strip() if h is not None else "" for h in rows[0]]
         testcases = []
+
+        # 需要 JSON 解析的字段
+        json_fields = ("headers", "body", "extract", "validate",
+                       "db_setup", "db_extract", "db_teardown")
 
         for row in rows[1:]:
             case = {}
             for i, header in enumerate(headers):
-                if not header:
+                if not header:  # 跳过空列头
                     continue
                 value = row[i] if i < len(row) else None
                 if value is None or (isinstance(value, str) and value.strip() == ""):
                     continue
-                if header in ("headers", "body", "extract", "validate",
-                              "db_setup", "db_extract", "db_teardown"):
+                # JSON 字段需要解析字符串为 dict/list
+                if header in json_fields:
                     case[header] = json.loads(str(value))
                 else:
                     case[header] = value
-            if case:  # Skip empty rows
+            if case:  # 跳过完全空的行
                 testcases.append(case)
 
         return {"module": module_name, "testcases": testcases}
     finally:
-        wb.close()
+        wb.close()  # 确保文件句柄释放（即使解析出错）
 
 
 def scan_testcase_files(directory: str) -> list[str]:
+    """扫描目录下所有支持的用例文件，按文件名排序返回。
+
+    Args:
+        directory: 要扫描的目录路径
+
+    Returns:
+        文件绝对路径列表
+    """
     valid_extensions = {".yaml", ".yml", ".json", ".xlsx"}
     files = []
     for root, _, filenames in os.walk(directory):
