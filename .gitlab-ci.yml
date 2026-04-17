@@ -8,9 +8,15 @@ api_test:
     ENV: test
     TEST_PATH: testcases/
     REPORT: both
+    LEVEL: ""          # 优先级过滤（可选）：P0 / P0,P1 / 留空运行全部
+    WORKERS: ""        # 并行进程数（可选）：数字 / auto / 留空单进程
   script:
     - pip install -r requirements.txt
-    - python run.py --env $ENV --path $TEST_PATH --report $REPORT
+    - |
+      CMD="python run.py --env $ENV --path $TEST_PATH --report $REPORT"
+      [ -n "$LEVEL" ] && CMD="$CMD --level $LEVEL"
+      [ -n "$WORKERS" ] && CMD="$CMD --workers $WORKERS"
+      $CMD
   artifacts:
     paths:
       - reports/

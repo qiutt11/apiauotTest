@@ -1,6 +1,6 @@
 current_env: test
 timeout: 30
-retry: 0
+# retry: 0  # 预留字段，当前版本未实现
 report_type: html
 
 email:

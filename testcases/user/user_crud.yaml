@@ -1,6 +1,7 @@
 module: 用户管理
 testcases:
   - name: 登录获取token
+    level: P0
     method: POST
     url: /api/login
     body:
@@ -12,6 +13,7 @@ testcases:
       - eq: [$.code, 0]
 
   - name: 查询用户列表
+    level: P1
     method: GET
     url: /api/users
     headers:

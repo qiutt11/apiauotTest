@@ -4,3 +4,12 @@ global_headers:
 global_variables:
   admin_user: admin
   admin_pass: "prod123"
+
+# 生产环境数据库配置（按需启用，谨慎操作）
+# database:
+#   host: 127.0.0.1
+#   port: 3306
+#   user: readonly_user
+#   password: ""
+#   database: prod_db
+#   charset: utf8mb4
