@@ -243,7 +243,16 @@ def pytest_sessionfinish(session, exitstatus):
         total = stats["total"]
         stats["pass_rate"] = f"{(stats['passed'] / total * 100):.1f}%" if total > 0 else "0%"
         stats.setdefault("duration", "unknown")
-        stats_path = os.path.join(PROJECT_ROOT, "reports", ".stats.json")
-        os.makedirs(os.path.dirname(stats_path), exist_ok=True)
+
+        reports_dir = os.path.join(PROJECT_ROOT, "reports")
+        os.makedirs(reports_dir, exist_ok=True)
+
+        # When running under xdist, each worker writes its own stats file
+        worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+        if worker_id:
+            stats_path = os.path.join(reports_dir, f".stats_{worker_id}.json")
+        else:
+            stats_path = os.path.join(reports_dir, ".stats.json")
+
         with open(stats_path, "w", encoding="utf-8") as f:
             json.dump(stats, f, ensure_ascii=False)

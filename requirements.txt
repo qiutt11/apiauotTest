@@ -8,3 +8,4 @@ pytest-html>=3.2.0
 loguru>=0.7.0
 pymysql>=1.1.0
 responses>=0.23.0
+pytest-xdist>=3.0.0
