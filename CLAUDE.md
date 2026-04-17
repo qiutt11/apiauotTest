@@ -37,7 +37,7 @@ common/              # Core framework modules (DO NOT modify for normal use)
 config/              # Environment configs (config.yaml + per-env files)
 testcases/           # Test case data files (YAML/JSON/Excel)
 hooks/               # User-defined hook functions
-tests/               # 117 tests (95 unit + 17 integration + 5 level filter), 91% coverage
+tests/               # 122 tests (100 unit + 17 integration + 5 level filter), 91% coverage
 conftest.py          # pytest integration: auto-discovery, execution, stats, allure, level filter
 run.py               # CLI entry point (--env, --path, --report, --level, --workers)
 ```
@@ -64,7 +64,7 @@ python3 -m coverage report --show-missing
 
 - **Data-driven**: Test cases are pure data files. The framework parses and executes them automatically via `conftest.py` custom collector (`TestCaseFile` / `TestCaseItem`).
 - **Variable pool**: Three-tier priority (temp > module > global). Variables resolved via `${xxx}`. Single `${var}` preserves original type; embedded in string converts to str.
-- **Execution flow per test case**: resolve vars → db_setup (with extract) → re-resolve vars → before hook → HTTP request → after hook → extract → db_extract → validate → db_teardown → log.
+- **Execution flow per test case**: resolve vars → db_setup (with extract) → re-resolve vars → before hook → (request → after hook → extract → db_extract → validate) with retry → db_teardown → log.
 - **pytest integration**: Custom `pytest_collect_file` discovers YAML/JSON/Excel files under `testcases/`. Each test case becomes a `TestCaseItem`. `--level` filters at collection time. `--workers` uses xdist `loadfile` distribution.
 - **Notifications**: Email (SMTP_SSL) and Feishu (webhook card with color-coded header and @mentions).
 

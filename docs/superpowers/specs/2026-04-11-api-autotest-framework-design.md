@@ -309,7 +309,7 @@ def decrypt_response(response):
 ```yaml
 current_env: test
 timeout: 30
-retry: 0
+retry: 0                       # 失败重试次数（0=不重试，用例级 retry 可覆盖）
 report_type: html              # allure / html / both
 
 email:
@@ -398,10 +398,16 @@ conftest.py 收集 testcases/ 下的 YAML/JSON/Excel 文件
 全部执行完毕 → 聚合统计结果 → 生成报告 → 发送通知（邮件 + 飞书）
 ```
 
+重试机制：
+- 请求异常或断言失败时，根据 `retry` 配置自动重试（全局配置 + 用例级覆盖）
+- 重试间隔递增退避：2s → 4s → 6s → ... 最大 10s
+- db_setup / hook 失败不触发重试（前置条件错误，重试无意义）
+- 用例级 `retry` 字段优先级高于全局 `retry` 配置
+
 异常处理：
 - `db_setup` 失败：已执行的 SQL 自动 rollback，用例标记失败，teardown 仍执行
 - `hook` 异常：用例标记失败，记录错误信息，teardown 仍执行
-- 请求超时/连接失败：用例标记失败，错误信息记录
+- 请求超时/连接失败：触发重试机制，全部失败后标记失败
 - `db_teardown` 异常：记录错误日志，不影响用例结果
 
 ## 日志记录
