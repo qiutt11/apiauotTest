@@ -1,6 +1,6 @@
 current_env: test
 timeout: 30
-# retry: 0  # 预留字段，当前版本未实现
+retry: 0                # 失败重试次数（0=不重试，用例级别 retry 字段可覆盖）
 report_type: html
 
 email:

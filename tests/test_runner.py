@@ -306,3 +306,123 @@ def test_run_testcase_error_with_db_teardown(mock_send):
 
     assert result["passed"] is False
     mock_db.execute_teardown.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Retry mechanism tests
+# ---------------------------------------------------------------------------
+@patch("common.runner.time.sleep")  # Skip actual sleep in tests
+@patch("common.runner.send_request")
+def test_retry_on_request_error(mock_send, mock_sleep):
+    """Request error should trigger retry, then succeed."""
+    mock_send.side_effect = [
+        # First attempt: connection error
+        {"status_code": None, "body": None, "headers": None, "elapsed_ms": 0, "error": "ConnectionError"},
+        # Second attempt: success
+        {"status_code": 200, "body": {"code": 0}, "headers": {}, "elapsed_ms": 50, "error": None},
+    ]
+
+    pool = VariablePool()
+    case = {
+        "name": "重试成功",
+        "retry": 1,
+        "method": "GET",
+        "url": "/api/test",
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30)
+
+    assert result["passed"] is True
+    assert mock_send.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+@patch("common.runner.time.sleep")
+@patch("common.runner.send_request")
+def test_retry_on_validation_failure(mock_send, mock_sleep):
+    """Validation failure should trigger retry."""
+    mock_send.side_effect = [
+        # First attempt: wrong code
+        {"status_code": 200, "body": {"code": 500}, "headers": {}, "elapsed_ms": 50, "error": None},
+        # Second attempt: correct code
+        {"status_code": 200, "body": {"code": 0}, "headers": {}, "elapsed_ms": 50, "error": None},
+    ]
+
+    pool = VariablePool()
+    case = {
+        "name": "断言重试",
+        "retry": 1,
+        "method": "GET",
+        "url": "/api/test",
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30)
+
+    assert result["passed"] is True
+    assert mock_send.call_count == 2
+
+
+@patch("common.runner.time.sleep")
+@patch("common.runner.send_request")
+def test_retry_exhausted_returns_last_failure(mock_send, mock_sleep):
+    """When all retries are exhausted, return the last failure result."""
+    mock_send.return_value = {
+        "status_code": None, "body": None, "headers": None, "elapsed_ms": 0,
+        "error": "ConnectionError: refused",
+    }
+
+    pool = VariablePool()
+    case = {
+        "name": "全部失败",
+        "retry": 2,
+        "method": "GET",
+        "url": "/api/down",
+        "validate": [{"eq": ["status_code", 200]}],
+    }
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30)
+
+    assert result["passed"] is False
+    assert result["error"] is not None
+    assert mock_send.call_count == 3  # 1 initial + 2 retries
+
+
+@patch("common.runner.send_request")
+def test_no_retry_when_retry_is_zero(mock_send):
+    """retry=0 means no retry (default behavior)."""
+    mock_send.return_value = {
+        "status_code": 200, "body": {"code": 500}, "headers": {}, "elapsed_ms": 50, "error": None,
+    }
+
+    pool = VariablePool()
+    case = {
+        "name": "不重试",
+        "method": "GET",
+        "url": "/api/test",
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30)
+
+    assert result["passed"] is False
+    assert mock_send.call_count == 1
+
+
+@patch("common.runner.send_request")
+def test_case_retry_overrides_default(mock_send):
+    """Case-level retry should override default_retry."""
+    mock_send.return_value = {
+        "status_code": 200, "body": {"code": 0}, "headers": {}, "elapsed_ms": 50, "error": None,
+    }
+
+    pool = VariablePool()
+    case = {
+        "name": "用例级重试",
+        "retry": 3,  # Case says 3
+        "method": "GET",
+        "url": "/api/test",
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    # default_retry=1 but case says 3, should use 3
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30, default_retry=1)
+
+    assert result["passed"] is True
+    assert mock_send.call_count == 1  # Passed on first try, no retry needed

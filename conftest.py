@@ -143,6 +143,7 @@ class TestCaseItem(pytest.Item):
             hook_manager=hooks,
             db_handler=db,
             global_headers=cfg.get("global_headers", {}),
+            default_retry=cfg.get("retry", 0),
         )
 
         # Log
