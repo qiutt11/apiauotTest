@@ -10,6 +10,7 @@
     - 多进程并行时每个 worker 独立写入统计文件
 """
 
+import copy
 import json
 import os
 
@@ -17,7 +18,7 @@ import allure
 import pytest
 
 from common.config_loader import load_config
-from common.data_loader import load_testcases
+from common.data_loader import load_testcases, load_excel_rows
 from common.variable_pool import VariablePool
 from common.runner import run_testcase
 from common.hook_manager import HookManager
@@ -155,6 +156,34 @@ class TestCaseFile(pytest.File):
                     continue
 
             name = case.get("name", f"case_{i}")
+
+            # ---- Excel 驱动用例 ----
+            # 当 YAML 中的 testcase 同时包含 excel_source 和 steps 字段时，
+            # 视为"Excel 数据驱动"用例：从 Excel 加载每行数据，每行生成一个
+            # ExcelDrivenItem，在运行时按 steps 顺序执行（如：保存→查看详情）。
+            if case.get("excel_source") and case.get("steps"):
+                excel_path = case["excel_source"]
+                # excel_source 支持相对路径，基于 YAML 文件所在目录解析
+                if not os.path.isabs(excel_path):
+                    excel_path = os.path.join(os.path.dirname(str(self.path)), excel_path)
+                if not os.path.exists(excel_path):
+                    raise FileNotFoundError(
+                        f"Excel data file not found: {excel_path} "
+                        f"(referenced by excel_source in {self.path})"
+                    )
+                rows = load_excel_rows(excel_path)
+                for row_idx, row_data in enumerate(rows):
+                    # 用 Excel 行的第一列值作为用例名后缀，方便在报告中区分不同行数据
+                    # 例如："保存并验证详情[张三]"、"保存并验证详情[李四]"
+                    first_val = next(iter(row_data.values()), row_idx)
+                    item_name = f"{name}[{first_val}]"
+                    yield ExcelDrivenItem.from_parent(
+                        self, name=item_name,
+                        steps=case["steps"], row_data=row_data,
+                        row_index=row_idx, module_name=module_name,
+                    )
+                continue
+
             yield TestCaseItem.from_parent(
                 self, name=name, callobj=case, module_name=module_name
             )
@@ -256,6 +285,237 @@ class TestCaseItem(pytest.Item):
 
     def reportinfo(self):
         """pytest 报告中显示的用例标识。"""
+        return self.path, None, f"{self._module_name} > {self.name}"
+
+
+# ==========================================================================
+# Excel 驱动用例的辅助函数
+# ==========================================================================
+def _flatten_excel_validations(prefix: str, value) -> list[dict]:
+    """递归展开 Excel 值为 eq 断言列表。
+
+    根据值的类型递归生成 JSONPath 断言：
+        - 简单值（str/int/float/bool）→ 直接生成 eq 断言
+        - dict 嵌套对象 → 递归展开每个 key，如 $.data.address.city
+        - list 数组 → 按下标展开，如 $.data.tags[0]
+        - 数组内嵌套对象 → 继续递归，如 $.data.items[0].name
+
+    示例：
+        prefix="$.data", value={"name": "张三", "tags": ["vip"]}
+        → [{"eq": ["$.data.name", "张三"]}, {"eq": ["$.data.tags[0]", "vip"]}]
+
+    Args:
+        prefix: JSONPath 前缀（如 "$.data.name"）
+        value: Excel 单元格解析后的值
+
+    Returns:
+        断言列表，如 [{"eq": ["$.data.name", "张三"]}, ...]
+    """
+    validations = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            validations.extend(_flatten_excel_validations(f"{prefix}.{k}", v))
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            validations.extend(_flatten_excel_validations(f"{prefix}[{i}]", item))
+    else:
+        validations.append({"eq": [prefix, value]})
+    return validations
+
+
+def _build_body_from_excel(row_data: dict, body_from_excel) -> dict:
+    """根据 body_from_excel 配置，将 Excel 行数据转换为请求 body。
+
+    两种用法：
+        1. body_from_excel: true
+           → 所有 Excel 列直接作为 body 字段（列名 = 字段名）
+        2. body_from_excel: + field_mapping:
+           → Excel 列名通过 mapping 映射到接口字段名，未映射的列仍用原名
+           示例：field_mapping: {name: userName} → Excel 的 name 列 → body 的 userName 字段
+
+    Args:
+        row_data: Excel 行数据字典（{列名: 值}）
+        body_from_excel: True 或 dict（含 field_mapping）
+
+    Returns:
+        请求 body 字典
+    """
+    # body_from_excel: true → 直接使用 Excel 列名作为字段名
+    if body_from_excel is True:
+        return dict(row_data)
+
+    # body_from_excel: {field_mapping: {excel列名: 接口字段名}} → 映射后作为 body
+    if isinstance(body_from_excel, dict):
+        mapping = body_from_excel.get("field_mapping", {})
+        body = {}
+        for col, val in row_data.items():
+            # 在 mapping 中查找映射名，找不到则用原列名
+            field_name = mapping.get(col, col)
+            body[field_name] = val
+        return body
+
+    return dict(row_data)
+
+
+def _build_excel_validations(row_data: dict, validate_from_excel: dict) -> list[dict]:
+    """根据 validate_from_excel 配置，将 Excel 行数据转换为 eq 断言列表。
+
+    工作方式：
+        1. 从配置中读取 prefix（JSONPath 前缀，默认 $.data）和可选的 field_mapping
+        2. 遍历 Excel 行的每列数据
+        3. 通过 field_mapping 将 Excel 列名映射为响应字段名（未映射则用原列名）
+        4. 调用 _flatten_excel_validations 递归展开为 eq 断言
+
+    示例：
+        Excel 列 name="张三"，mapping={name: user_name}，prefix=$.data
+        → 生成断言 {"eq": ["$.data.user_name", "张三"]}
+
+    Args:
+        row_data: Excel 行数据字典（{列名: 值}）
+        validate_from_excel: 配置字典，含 prefix 和可选 field_mapping
+
+    Returns:
+        断言列表，如 [{"eq": ["$.data.name", "张三"]}, ...]
+    """
+    prefix = validate_from_excel.get("prefix", "$.data")
+    mapping = validate_from_excel.get("field_mapping", {})
+    validations = []
+    for col, val in row_data.items():
+        field_name = mapping.get(col, col)
+        validations.extend(_flatten_excel_validations(f"{prefix}.{field_name}", val))
+    return validations
+
+
+class ExcelDrivenItem(pytest.Item):
+    """Excel 驱动的多步骤测试用例执行器。
+
+    每个实例对应 Excel 中的一行数据，按 steps 顺序执行保存→详情等多步操作。
+    """
+
+    def __init__(self, name, parent, steps, row_data, row_index, module_name=""):
+        """初始化 Excel 驱动用例。
+
+        Args:
+            name: 用例名（含 Excel 行标识，如 "保存并验证详情[张三]"）
+            parent: 父 pytest 节点（TestCaseFile）
+            steps: YAML 中定义的步骤列表（每个 step 是一个 case 字典）
+            row_data: 当前 Excel 行的数据字典（{列名: 值}）
+            row_index: Excel 行号（从 0 开始，用于调试）
+            module_name: 所属模块名（显示在 Allure 报告中）
+        """
+        super().__init__(name, parent)
+        self._steps = steps          # YAML 中定义的步骤列表
+        self._row_data = row_data    # 当前 Excel 行数据
+        self._row_index = row_index  # Excel 行索引
+        self._module_name = module_name
+        self.user_properties.append(("module", module_name))
+
+    def runtest(self):
+        """执行 Excel 驱动的多步骤用例（由 pytest 调用）。
+
+        执行流程：
+            1. 将 Excel 行数据注入变量池（可通过 ${列名} 引用）
+            2. 遍历 steps，对每个 step：
+               a. 若有 body_from_excel，将 Excel 行数据转换为请求 body
+               b. 若有 validate_from_excel，将 Excel 行数据展开为 eq 断言
+               c. 调用 run_testcase() 执行
+               d. 任一 step 失败则整体失败，停止后续 step
+        """
+        config = self.config
+        cfg = config._autotest_config
+        pool = config._autotest_pool
+        logger = config._autotest_logger
+        hooks = config._autotest_hooks
+        db = config._autotest_db
+
+        # 文件切换时清空模块变量（与 TestCaseItem 保持一致的隔离逻辑）
+        current_file = str(self.path)
+        if config._autotest_current_file != current_file:
+            pool.clear_module()
+            config._autotest_current_file = current_file
+
+        # 将 Excel 行数据写入变量池，使 step 中可通过 ${列名} 引用
+        # 例如 Excel 有 name 列，则 url: /api/user/${name} 会被替换
+        for col, val in self._row_data.items():
+            pool.set_module(col, val)
+
+        # 设置 Allure 报告标签
+        allure.dynamic.feature(self._module_name)
+        allure.dynamic.story(self.name)
+
+        # ---- 逐步执行 steps ----
+        for step_index, step in enumerate(self._steps):
+            # 深拷贝 step，避免修改 YAML 原始数据（多行数据共享同一 steps 定义，
+            # 浅拷贝会导致嵌套 dict 如 headers 在行间共享引用）
+            step_case = copy.deepcopy(step)
+            step_name = step_case.get("name", f"step_{step_index}")
+
+            # body_from_excel：将 Excel 行数据转换为请求 body
+            # 支持直接映射（true）或字段名映射（field_mapping）
+            if step_case.get("body_from_excel"):
+                step_case["body"] = _build_body_from_excel(
+                    self._row_data, step_case.pop("body_from_excel")
+                )
+
+            # validate_from_excel：将 Excel 行数据递归展开为 eq 断言
+            # 生成的断言追加到 validate 列表末尾（保留原有的 validate 断言）
+            if step_case.get("validate_from_excel"):
+                excel_validations = _build_excel_validations(
+                    self._row_data, step_case.pop("validate_from_excel")
+                )
+                existing = step_case.get("validate", [])
+                step_case["validate"] = existing + excel_validations
+
+            # 调用现有的核心执行引擎（与 TestCaseItem 使用同一套逻辑）
+            result = run_testcase(
+                case=step_case,
+                base_url=cfg["base_url"],
+                pool=pool,
+                timeout=cfg.get("timeout", 30),
+                hook_manager=hooks,
+                db_handler=db,
+                global_headers=cfg.get("global_headers", {}),
+                default_retry=cfg.get("retry", 0),
+            )
+
+            # 记录完整的请求/响应日志
+            log_request(
+                logger=logger,
+                module=self._module_name,
+                name=step_name,
+                method=step_case.get("method", ""),
+                url=cfg["base_url"] + step_case.get("url", ""),
+                headers=step_case.get("headers"),
+                body=step_case.get("body"),
+                status_code=result["response"]["status_code"] if result["response"] else None,
+                elapsed_ms=result["response"]["elapsed_ms"] if result["response"] else 0,
+                response=result["response"]["body"] if result["response"] else None,
+                extracts=result.get("extracts"),
+                validations=[
+                    f"{v['keyword']}: {'PASS' if v['passed'] else 'FAIL'}"
+                    for v in result.get("validations", [])
+                ],
+            )
+
+            # 任一 step 失败则整体失败，停止执行后续 step
+            if not result["passed"]:
+                failures = []
+                if result.get("error"):
+                    failures.append(f"[{step_name}] Request error: {result['error']}")
+                for v in result.get("validations", []):
+                    if not v["passed"]:
+                        failures.append(
+                            f"[{step_name}] {v['keyword']}: {v.get('expression', '')} "
+                            f"actual={v.get('actual')} expect={v.get('expect', '')}"
+                        )
+                raise TestCaseFailure("\n".join(failures))
+
+    def repr_failure(self, excinfo):
+        if isinstance(excinfo.value, TestCaseFailure):
+            return str(excinfo.value)
+        return super().repr_failure(excinfo)
+
+    def reportinfo(self):
         return self.path, None, f"{self._module_name} > {self.name}"
 
 

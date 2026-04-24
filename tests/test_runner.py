@@ -426,3 +426,73 @@ def test_case_retry_overrides_default(mock_send):
 
     assert result["passed"] is True
     assert mock_send.call_count == 1  # Passed on first try, no retry needed
+
+
+# ---------------------------------------------------------------------------
+# Case-level base_url override tests
+# ---------------------------------------------------------------------------
+@patch("common.runner.send_request")
+def test_case_base_url_overrides_global(mock_send):
+    """case.base_url should override the global base_url parameter."""
+    mock_send.return_value = {
+        "status_code": 200, "body": {"code": 0}, "headers": {}, "elapsed_ms": 50, "error": None,
+    }
+
+    pool = VariablePool()
+    case = {
+        "name": "跨系统请求",
+        "base_url": "https://other-system.com",
+        "method": "GET",
+        "url": "/api/data",
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://default.com", pool=pool, timeout=30)
+
+    assert result["passed"] is True
+    # 验证实际请求使用了 case 级别的 base_url
+    call_kwargs = mock_send.call_args[1]
+    assert call_kwargs["url"] == "https://other-system.com/api/data"
+
+
+@patch("common.runner.send_request")
+def test_case_base_url_with_variable(mock_send):
+    """case.base_url supports ${variable} resolution."""
+    mock_send.return_value = {
+        "status_code": 200, "body": {"code": 0}, "headers": {}, "elapsed_ms": 50, "error": None,
+    }
+
+    pool = VariablePool()
+    pool.set_global("system_b_url", "https://system-b.example.com")
+    case = {
+        "name": "变量base_url",
+        "base_url": "${system_b_url}",
+        "method": "POST",
+        "url": "/api/save",
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://system-a.com", pool=pool, timeout=30)
+
+    assert result["passed"] is True
+    call_kwargs = mock_send.call_args[1]
+    assert call_kwargs["url"] == "https://system-b.example.com/api/save"
+
+
+@patch("common.runner.send_request")
+def test_no_case_base_url_uses_global(mock_send):
+    """Without case.base_url, global base_url is used as before."""
+    mock_send.return_value = {
+        "status_code": 200, "body": {"code": 0}, "headers": {}, "elapsed_ms": 50, "error": None,
+    }
+
+    pool = VariablePool()
+    case = {
+        "name": "默认base_url",
+        "method": "GET",
+        "url": "/api/test",
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://default.com", pool=pool, timeout=30)
+
+    assert result["passed"] is True
+    call_kwargs = mock_send.call_args[1]
+    assert call_kwargs["url"] == "https://default.com/api/test"

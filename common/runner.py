@@ -43,8 +43,11 @@ def run_testcase(
     """执行单个测试用例，返回执行结果。
 
     Args:
-        case: 用例字典（从 YAML/JSON/Excel 解析而来）
-        base_url: 接口基础地址（如 https://api.example.com）
+        case: 用例字典（从 YAML/JSON/Excel 解析而来）。
+              可包含 base_url 字段覆盖全局 base_url（支持跨系统场景），
+              支持 ${变量名} 引用，如 base_url: ${system_b_url}。
+        base_url: 接口基础地址（如 https://api.example.com），
+                  当 case 中未指定 base_url 时使用此值。
         pool: 变量池实例
         timeout: HTTP 请求超时时间（秒）
         hook_manager: Hook 管理器实例（可选）
@@ -56,6 +59,11 @@ def run_testcase(
         结果字典：{name, passed, response, extracts, db_vars, validations, error}
     """
     name = case.get("name", "unnamed")
+    # 用例级 base_url 优先于全局 base_url（支持多系统场景）
+    # 用例中可写 base_url: https://other-system.com 或 base_url: ${system_b_url}
+    case_base_url = case.get("base_url")
+    if case_base_url:
+        base_url = str(pool.resolve(case_base_url))
     # 用例级 retry 优先于全局 default_retry
     retry_count = case.get("retry", default_retry)
 
@@ -89,6 +97,9 @@ def run_testcase(
                     pool.set_module(k, v)
 
                 # ---- 第 3 步：用 db_setup 提取的变量重新解析请求参数 ----
+                # base_url 也需要重新解析（可能引用了 db_setup 提取的变量）
+                if case_base_url:
+                    base_url = str(pool.resolve(case_base_url))
                 resolved = pool.resolve({
                     "method": case.get("method", "GET"),
                     "url": case.get("url", ""),

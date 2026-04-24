@@ -10,22 +10,23 @@
 2. [配置详解](#2-配置详解)
 3. [用例编写](#3-用例编写)
 4. [用例数据格式](#4-用例数据格式)
-5. [断言关键字](#5-断言关键字)
-6. [变量系统](#6-变量系统)
-7. [接口依赖与数据传递](#7-接口依赖与数据传递)
-8. [数据库操作](#8-数据库操作)
-9. [Hook 扩展](#9-hook-扩展)
-10. [优先级过滤](#10-优先级过滤)
-11. [并行执行](#11-并行执行)
-12. [重试机制](#12-重试机制)
-13. [运行与命令行参数](#13-运行与命令行参数)
-14. [测试报告](#14-测试报告)
-15. [日志系统](#15-日志系统)
-16. [邮件通知](#16-邮件通知)
-17. [飞书通知](#17-飞书通知)
-18. [CI/CD 集成](#18-cicd-集成)
-19. [与被测系统集成](#19-与被测系统集成)
-20. [常见问题](#20-常见问题)
+5. [Excel 驱动用例（保存+详情验证）](#5-excel-驱动用例保存详情验证)
+6. [断言关键字](#6-断言关键字)
+7. [变量系统](#7-变量系统)
+8. [接口依赖与数据传递](#8-接口依赖与数据传递)
+9. [数据库操作](#9-数据库操作)
+10. [Hook 扩展](#10-hook-扩展)
+11. [优先级过滤](#11-优先级过滤)
+12. [并行执行](#12-并行执行)
+13. [重试机制](#13-重试机制)
+14. [运行与命令行参数](#14-运行与命令行参数)
+15. [测试报告](#15-测试报告)
+16. [日志系统](#16-日志系统)
+17. [邮件通知](#17-邮件通知)
+18. [飞书通知](#18-飞书通知)
+19. [CI/CD 集成](#19-cicd-集成)
+20. [与被测系统集成](#20-与被测系统集成)
+21. [常见问题](#21-常见问题)
 
 ---
 
@@ -191,6 +192,7 @@ testcases:
   - name: 用例名称                  # 必填
     description: 用例描述            # 可选，显示在报告详情中
     level: normal                   # 可选，优先级（影响 Allure 报告排序）
+    base_url: https://other.com     # 可选，覆盖全局 base_url（跨系统场景）
     method: POST                    # 必填，HTTP 方法
     url: /api/v1/login              # 必填，接口路径（自动拼接 base_url）
     headers:                        # 可选，请求头
@@ -298,7 +300,217 @@ testcases:
 
 ---
 
-## 5. 断言关键字
+## 5. Excel 驱动用例（保存+详情验证）
+
+当接口的请求/响应字段很多（如保存接口有 20+ 字段，详情接口需逐一比对）时，在 YAML 中逐行写断言非常繁琐。**Excel 驱动用例**将字段数据放在 Excel 中，框架自动生成请求 body 和验证断言。
+
+### 5.1 适用场景
+
+- 保存接口 → 查看详情接口，需要验证保存的每个字段是否正确回显
+- 字段多（10+），需要逐一比对
+- 多组测试数据（Excel 每行一组，自动展开为独立用例）
+
+### 5.2 YAML 结构
+
+在 `testcases` 数组中，使用 `excel_source` + `steps` 标识 Excel 驱动用例：
+
+```yaml
+module: 用户管理
+testcases:
+  # 普通用例（走原有逻辑，不受影响）
+  - name: 登录获取token
+    level: P0
+    method: POST
+    url: /api/login
+    body:
+      username: ${admin_user}
+      password: ${admin_pass}
+    extract:
+      token: $.data.token
+    validate:
+      - eq: [$.code, 0]
+
+  # Excel 驱动用例
+  - name: 保存并验证用户详情
+    level: P0
+    excel_source: data/user_data.xlsx    # Excel 路径（相对于 YAML 文件所在目录）
+    steps:
+      - name: 保存用户
+        method: POST
+        url: /api/user/save
+        headers:
+          Authorization: Bearer ${token}
+        body_from_excel: true             # 用 Excel 行数据作为请求 body
+        extract:
+          id: $.data.id
+        validate:
+          - eq: [$.code, 0]
+
+      - name: 查看用户详情
+        method: GET
+        url: /api/user/detail/${id}
+        headers:
+          Authorization: Bearer ${token}
+        validate_from_excel:              # 用 Excel 行数据生成断言
+          prefix: $.data
+        validate:
+          - eq: [$.code, 0]
+```
+
+Excel 每行数据会生成一个独立的测试用例，按 steps 顺序执行。报告中显示为：`保存并验证用户详情[张三]`、`保存并验证用户详情[李四]`。
+
+### 5.3 Excel 文件格式
+
+| name | age | phone  | tags            | address                        |
+|------|-----|--------|-----------------|--------------------------------|
+| 张三 | 25  | 138xxx | ["vip","new"]   | {"city":"北京","street":"xx路"} |
+| 李四 | 30  | 139xxx | ["normal"]      | {"city":"上海","street":"yy路"} |
+
+- 第一行 = 表头（列名）
+- 每行 = 一组测试数据
+- 简单值（字符串、数字）直接填写
+- 复杂值（数组、嵌套对象）在单元格中写 JSON 字符串，框架自动解析
+
+### 5.4 body_from_excel 用法
+
+将 Excel 行数据自动转换为请求 body。
+
+**直接映射**（列名 = 接口字段名）：
+
+```yaml
+body_from_excel: true
+```
+
+Excel 列 `name`、`age`、`phone` → body 为 `{"name": "张三", "age": 25, "phone": "138xxx"}`
+
+**字段名映射**（列名与接口字段名不一致时）：
+
+```yaml
+body_from_excel:
+  field_mapping:
+    name: userName        # Excel 的 name 列 → body 的 userName 字段
+    phone: phoneNumber    # Excel 的 phone 列 → body 的 phoneNumber 字段
+```
+
+未映射的列仍使用原列名（如 `age` 没有映射，body 中就是 `age`）。
+
+### 5.5 validate_from_excel 用法
+
+将 Excel 行数据自动转换为 `eq` 断言，与详情接口响应逐字段比对。
+
+**基本用法：**
+
+```yaml
+validate_from_excel:
+  prefix: $.data       # 详情响应中字段的 JSONPath 前缀
+```
+
+Excel 列 `name`，值为 `"张三"` → 自动生成断言 `eq: [$.data.name, "张三"]`
+
+**字段名映射**（响应字段名与 Excel 列名不一致时）：
+
+```yaml
+validate_from_excel:
+  prefix: $.data
+  field_mapping:
+    name: user_name      # Excel 的 name 列 → 断言 $.data.user_name
+    phone: phone_number
+```
+
+**复杂值自动递归展开：**
+
+| Excel 值类型 | 生成的断言 | 示例 |
+|-------------|-----------|------|
+| 简单值 | `eq: [prefix.col, value]` | `eq: [$.data.name, "张三"]` |
+| dict 嵌套 | 递归展开每个 key | `eq: [$.data.address.city, "北京"]` |
+| list 数组 | 按下标展开 | `eq: [$.data.tags[0], "vip"]` |
+| 数组内嵌套对象 | 继续递归 | `eq: [$.data.items[0].name, "x"]` |
+
+### 5.6 变量传递
+
+Excel 行数据会自动写入变量池，在 steps 中可以通过 `${列名}` 引用：
+
+```yaml
+steps:
+  - name: 保存
+    url: /api/user/save
+    body_from_excel: true
+    extract:
+      id: $.data.id          # 提取保存返回的 ID
+    validate:
+      - eq: [$.code, 0]
+
+  - name: 查看详情
+    url: /api/user/detail/${id}   # 使用上一步提取的 ID
+    validate_from_excel:
+      prefix: $.data
+```
+
+前一个 step 的 extract 变量在后续 step 中可直接使用，与普通用例的变量传递规则一致。
+
+### 5.7 注意事项
+
+- `excel_source` 路径相对于 YAML 文件所在目录（也支持绝对路径）
+- 普通用例和 Excel 驱动用例可以混合写在同一个 YAML 文件中
+- Excel 驱动用例同样支持 `level` 优先级过滤
+- 任一 step 失败则整个用例失败，后续 step 不再执行
+- `validate` 中手写的断言会保留，`validate_from_excel` 生成的断言追加在后面
+
+### 5.8 跨系统场景（不同 step 调用不同系统）
+
+当保存接口和详情接口在不同系统时，可以在 step 中使用 `base_url` 覆盖全局地址：
+
+```yaml
+- name: 跨系统保存并查询
+  excel_source: data/order_data.xlsx
+  steps:
+    # Step 1: 调用 A 系统保存
+    - name: A系统保存订单
+      base_url: https://api-a.example.com     # 覆盖全局 base_url
+      method: POST
+      url: /api/order/save
+      body_from_excel: true
+      extract:
+        order_id: $.data.id
+      validate:
+        - eq: [$.code, 0]
+
+    # Step 2: 调用 B 系统查询详情
+    - name: B系统查询订单详情
+      base_url: https://api-b.example.com     # 不同的系统地址
+      method: GET
+      url: /api/order/detail/${order_id}
+      validate_from_excel:
+        prefix: $.data
+      validate:
+        - eq: [$.code, 0]
+```
+
+`base_url` 也支持变量引用，可以在环境配置中统一管理多个系统地址：
+
+```yaml
+# config/test.yaml
+global_variables:
+  system_a_url: https://api-a.test.com
+  system_b_url: https://api-b.test.com
+```
+
+```yaml
+# 用例中引用
+steps:
+  - name: A系统保存
+    base_url: ${system_a_url}
+    ...
+  - name: B系统查询
+    base_url: ${system_b_url}
+    ...
+```
+
+> **注意：** `base_url` 不仅在 Excel 驱动用例的 step 中可用，**普通用例也支持**。任何用例都可以通过 `base_url` 字段覆盖全局地址。
+
+---
+
+## 6. 断言关键字
 
 | 关键字 | 说明 | 用法 | 示例 |
 |--------|------|------|------|
@@ -322,9 +534,9 @@ testcases:
 
 ---
 
-## 6. 变量系统
+## 7. 变量系统
 
-### 6.1 变量来源
+### 7.1 变量来源
 
 | 来源 | 优先级 | 说明 |
 |------|--------|------|
@@ -332,7 +544,7 @@ testcases:
 | 模块变量 | 中 | `extract` 和 `db_extract` 提取的值 |
 | 全局变量 | 最低 | `config/{env}.yaml` 的 `global_variables` |
 
-### 6.2 使用方式
+### 7.2 使用方式
 
 在用例的任何字符串字段中使用 `${变量名}`：
 
@@ -348,7 +560,7 @@ db_extract:
   - sql: "SELECT * FROM orders WHERE id = ${order_id}"  # SQL 中
 ```
 
-### 6.3 类型保留
+### 7.3 类型保留
 
 当 `${变量名}` 是字段的**完整值**时，保留变量的原始类型：
 
@@ -358,7 +570,7 @@ body:
   name: "User ${id}" # 嵌入在字符串中时，转为字符串 "User 42"
 ```
 
-### 6.4 排错
+### 7.4 排错
 
 如果变量未找到，日志中会输出警告：`Unresolved variable: ${xxx}`。常见原因：
 - 变量名拼写错误
@@ -367,9 +579,9 @@ body:
 
 ---
 
-## 7. 接口依赖与数据传递
+## 8. 接口依赖与数据传递
 
-### 7.1 基本模式
+### 8.1 基本模式
 
 ```yaml
 # 步骤1：登录 → 提取 token
@@ -392,7 +604,7 @@ body:
     - eq: [$.code, 0]
 ```
 
-### 7.2 多级依赖
+### 8.2 多级依赖
 
 ```yaml
 - name: 创建部门
@@ -426,7 +638,7 @@ body:
     - eq: [$.data.department_id, ${dept_id}]
 ```
 
-### 7.3 JSONPath 常用语法
+### 8.3 JSONPath 常用语法
 
 | 表达式 | 含义 |
 |--------|------|
@@ -437,11 +649,11 @@ body:
 
 ---
 
-## 8. 数据库操作
+## 9. 数据库操作
 
 需要在 `config/{env}.yaml` 中配置 `database` 字段。
 
-### 8.1 前置数据准备
+### 9.1 前置数据准备
 
 ```yaml
 - name: 测试删除用户
@@ -458,7 +670,7 @@ body:
     - sql: "DELETE FROM users WHERE id = 9999"
 ```
 
-### 8.2 数据库校验
+### 9.2 数据库校验
 
 ```yaml
 - name: 创建订单后验证数据库
@@ -478,7 +690,7 @@ body:
     - gt: [${db_price}, 0]
 ```
 
-### 8.3 参数化 SQL（防注入）
+### 9.3 参数化 SQL（防注入）
 
 ```yaml
 db_setup:
@@ -486,7 +698,7 @@ db_setup:
     params: [9999, "test_user"]
 ```
 
-### 8.4 db_setup 中生成变量（SQL 生成数据供后续使用）
+### 9.4 db_setup 中生成变量（SQL 生成数据供后续使用）
 
 `db_setup` 中的 SQL 也可以带 `extract`，提取查询结果作为变量。后续 SQL 和接口请求都可以引用这些变量。
 
@@ -523,7 +735,7 @@ db_setup:
       params: ["${phone}"]
 ```
 
-### 8.5 注意事项
+### 9.5 注意事项
 
 - `db_teardown` 即使用例失败也会执行（类似 finally），确保测试数据被清理
 - 如果 `db_setup` 中多条 SQL 执行一半失败，已执行的 SQL 会被自动 rollback
@@ -532,11 +744,11 @@ db_setup:
 
 ---
 
-## 9. Hook 扩展
+## 10. Hook 扩展
 
 当标准功能无法满足需求时（如请求体加密、响应解密、自定义签名），可以使用 Hook。
 
-### 9.1 编写 Hook
+### 10.1 编写 Hook
 
 在 `hooks/` 目录下创建 `.py` 文件：
 
@@ -586,7 +798,7 @@ def extract_real_data(response):
     return response
 ```
 
-### 9.2 在用例中使用 Hook
+### 10.2 在用例中使用 Hook
 
 ```yaml
 - name: 需要签名的支付接口
@@ -602,7 +814,7 @@ def extract_real_data(response):
     - eq: [$.code, 0]
 ```
 
-### 9.3 Hook 注意事项
+### 10.3 Hook 注意事项
 
 - Hook 函数必须接收一个 dict 参数并返回修改后的 dict
 - 只有在 hooks 文件中**直接定义**的函数才会被注册（import 的第三方函数不会）
@@ -611,11 +823,11 @@ def extract_real_data(response):
 
 ---
 
-## 10. 优先级过滤
+## 11. 优先级过滤
 
 用例可以标记优先级，运行时按优先级筛选，实现冒烟测试 / 核心回归 / 全量回归。
 
-### 10.1 用例中标记优先级
+### 11.1 用例中标记优先级
 
 ```yaml
 testcases:
@@ -638,7 +850,7 @@ testcases:
     ...
 ```
 
-### 10.2 按优先级运行
+### 11.2 按优先级运行
 
 ```bash
 # 只跑 P0 冒烟用例
@@ -654,7 +866,7 @@ python3 run.py --level blocker,critical
 python3 run.py
 ```
 
-### 10.3 优先级映射表
+### 11.3 优先级映射表
 
 | 简写 | 全称 | 含义 | 建议使用场景 |
 |------|------|------|-------------|
@@ -666,7 +878,7 @@ python3 run.py
 
 ---
 
-## 11. 并行执行
+## 12. 并行执行
 
 通过 `--workers` 参数开启多进程并行，加速测试执行。
 
@@ -681,7 +893,7 @@ python3 run.py --workers auto
 python3 run.py --env test --workers 4 --level P0,P1 --report html
 ```
 
-### 11.1 并行规则
+### 12.1 并行规则
 
 | 规则 | 说明 |
 |------|------|
@@ -690,7 +902,7 @@ python3 run.py --env test --workers 4 --level P0,P1 --report html
 | 报告和统计 | 自动聚合所有 worker 的结果 |
 | 不指定 --workers | 单进程顺序执行（默认行为不变） |
 
-### 11.2 并行示例
+### 12.2 并行示例
 
 假设有 4 个用例文件，用 `--workers 2`：
 
@@ -701,7 +913,7 @@ Worker 1:  user.yaml（内部4个用例顺序执行） → product.yaml（内部
 
 两个 Worker 同时运行，总耗时约为单线程的一半。
 
-### 11.3 注意事项
+### 12.3 注意事项
 
 - 并行执行要求不同 YAML 文件之间**无数据依赖**（不共享变量、不操作同一条数据库记录）
 - 如果两个文件需要共享前置数据（如都需要登录 token），应各自在文件内登录
@@ -709,18 +921,18 @@ Worker 1:  user.yaml（内部4个用例顺序执行） → product.yaml（内部
 
 ---
 
-## 12. 重试机制
+## 13. 重试机制
 
 失败用例自动重试，减少因网络波动或服务短暂不可用导致的误报。
 
-### 12.1 全局配置
+### 13.1 全局配置
 
 ```yaml
 # config/config.yaml
 retry: 2        # 所有用例默认失败后重试 2 次（0=不重试）
 ```
 
-### 12.2 用例级别覆盖
+### 13.2 用例级别覆盖
 
 ```yaml
 - name: 不稳定的第三方接口
@@ -738,7 +950,7 @@ retry: 2        # 所有用例默认失败后重试 2 次（0=不重试）
     - eq: [status_code, 200]
 ```
 
-### 12.3 重试规则
+### 13.3 重试规则
 
 | 场景 | 行为 |
 |------|------|
@@ -751,7 +963,7 @@ retry: 2        # 所有用例默认失败后重试 2 次（0=不重试）
 
 ---
 
-## 13. 运行与命令行参数
+## 14. 运行与命令行参数
 
 ### 基本语法
 
@@ -793,7 +1005,7 @@ python3 run.py --env test --workers auto --report allure
 
 ---
 
-## 14. 测试报告
+## 15. 测试报告
 
 ### HTML 报告
 
@@ -827,7 +1039,7 @@ Allure 报告支持：
 
 ---
 
-## 15. 日志系统
+## 16. 日志系统
 
 每次运行自动在 `logs/` 目录生成日期命名的日志文件：
 
@@ -852,7 +1064,7 @@ logs/2026-04-11.log
 
 ---
 
-## 16. 邮件通知
+## 17. 邮件通知
 
 ### 配置
 
@@ -901,16 +1113,16 @@ HTML 报告会作为附件一并发送。
 
 ---
 
-## 17. 飞书通知
+## 18. 飞书通知
 
 支持将测试结果发送到飞书群聊（通过自定义机器人 Webhook）。
 
-### 16.1 创建飞书机器人
+### 18.1 创建飞书机器人
 
 1. 打开飞书群 → 设置 → 群机器人 → 添加机器人 → 自定义机器人
 2. 复制 Webhook 地址（格式：`https://open.feishu.cn/open-apis/bot/v2/hook/xxx`）
 
-### 16.2 配置
+### 18.2 配置
 
 编辑 `config/config.yaml`：
 
@@ -924,7 +1136,7 @@ feishu:
     - "ou_yyyy"
 ```
 
-### 16.3 通知效果
+### 18.3 通知效果
 
 **有失败时（红色卡片）：**
 
@@ -945,7 +1157,7 @@ feishu:
 
 **全部通过时（绿色卡片）：** 只显示统计信息，不 @ 人。
 
-### 16.4 与邮件同时使用
+### 18.4 与邮件同时使用
 
 邮件和飞书可以同时启用，互不影响：
 
@@ -958,14 +1170,14 @@ feishu:
   ...
 ```
 
-### 16.5 获取用户 open_id
+### 18.5 获取用户 open_id
 
 飞书管理后台 → 组织架构 → 点击用户 → 复制 open_id（格式：`ou_xxx`）。
 也可以通过飞书开放平台 API 获取。
 
 ---
 
-## 18. CI/CD 集成
+## 19. CI/CD 集成
 
 ### Jenkins
 
@@ -997,9 +1209,9 @@ python run.py --env $ENV --path testcases/ --report allure
 
 ---
 
-## 19. 与被测系统集成
+## 20. 与被测系统集成
 
-### 15.1 你需要知道的信息
+### 20.1 你需要知道的信息
 
 在开始编写用例之前，你需要从开发人员或接口文档中获取以下信息：
 
@@ -1015,7 +1227,7 @@ python run.py --env $ENV --path testcases/ --report allure
 | 测试账号 | 用户名、密码 | `config/{env}.yaml` 的 `global_variables` |
 | 数据库信息 | 地址、账号（可选） | `config/{env}.yaml` 的 `database` |
 
-### 15.2 典型集成步骤
+### 20.2 典型集成步骤
 
 ```
 1. 获取接口文档（Swagger/Postman/内部文档）
@@ -1033,7 +1245,7 @@ python run.py --env $ENV --path testcases/ --report allure
 7. 集成到 CI/CD
 ```
 
-### 15.3 不同鉴权方式的处理
+### 20.3 不同鉴权方式的处理
 
 **Bearer Token（最常见）：**
 
@@ -1069,7 +1281,7 @@ global_variables:
     X-API-Key: ${api_key}
 ```
 
-### 15.4 处理不同的响应格式
+### 20.4 处理不同的响应格式
 
 **标准 JSON 响应 `{"code": 0, "data": {...}}`：**
 
@@ -1098,7 +1310,7 @@ validate:
 
 ---
 
-## 20. 常见问题
+## 21. 常见问题
 
 ### Q: 如何跳过某些用例？
 

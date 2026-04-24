@@ -101,6 +101,63 @@ def _load_excel(file_path: str) -> dict:
         wb.close()  # 确保文件句柄释放（即使解析出错）
 
 
+def load_excel_rows(file_path: str) -> list[dict]:
+    """读取 Excel 每行数据为字典列表（表头作为 key）。
+
+    用于 Excel 驱动的数据参数化场景，每行对应一组测试数据。
+
+    规则：
+        - 第一行为表头（字段名）
+        - 每行一组数据，跳过空行
+        - 单元格值尝试 JSON 解析：能解析为 dict/list 的自动转换，否则保留原值
+        - 这样支持复杂结构：数组字段填 ["vip","new"]，嵌套对象填 {"city":"北京"}
+
+    Args:
+        file_path: Excel 文件路径（.xlsx）
+
+    Returns:
+        字典列表，每个字典代表一行数据 {列名: 值}
+    """
+    wb = load_workbook(file_path, read_only=True)
+    try:
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if len(rows) < 2:
+            return []
+
+        headers = [str(h).strip() if h is not None else "" for h in rows[0]]
+        result = []
+
+        for row in rows[1:]:
+            record = {}
+            all_empty = True
+            for i, header in enumerate(headers):
+                if not header:
+                    continue
+                value = row[i] if i < len(row) else None
+                if value is None or (isinstance(value, str) and value.strip() == ""):
+                    continue
+                all_empty = False
+                # openpyxl 将整数单元格返回为 float（如 25 → 25.0），转回 int
+                if isinstance(value, float) and value == int(value):
+                    value = int(value)
+                # 尝试 JSON 解析：dict/list 自动转换，其他保留原值
+                if isinstance(value, str):
+                    try:
+                        parsed = json.loads(value)
+                        if isinstance(parsed, (dict, list)):
+                            value = parsed
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                record[header] = value
+            if not all_empty:
+                result.append(record)
+
+        return result
+    finally:
+        wb.close()
+
+
 def scan_testcase_files(directory: str) -> list[str]:
     """扫描目录下所有支持的用例文件，按文件名排序返回。
 
