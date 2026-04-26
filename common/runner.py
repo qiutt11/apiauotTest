@@ -25,7 +25,7 @@ from typing import Any
 from loguru import logger as _logger
 
 from common.request_handler import send_request
-from common.extractor import extract_fields
+from common.extractor import extract_fields, get_extract_scope
 from common.validator import validate_case
 from common.variable_pool import VariablePool
 
@@ -223,7 +223,12 @@ def _execute_with_retry(
         if case.get("extract") and response["body"]:
             extracts = extract_fields(response["body"], case["extract"])
             for k, v in extracts.items():
-                pool.set_module(k, v)
+                # scope: global → 存全局变量池（跨文件可用）
+                # scope: module → 存模块变量池（默认，文件内共享）
+                if get_extract_scope(case["extract"], k) == "global":
+                    pool.set_global(k, v)
+                else:
+                    pool.set_module(k, v)
 
         # ---- 第 8 步：db_extract 数据库查询校验 ----
         db_vars = {}

@@ -37,7 +37,7 @@ common/              # Core framework modules (DO NOT modify for normal use)
 config/              # Environment configs (config.yaml + per-env files)
 testcases/           # Test case data files (YAML/JSON/Excel)
 hooks/               # User-defined hook functions
-tests/               # 158 tests (132 unit + 21 integration + 5 level filter)
+tests/               # 163 tests (137 unit + 21 integration + 5 level filter)
 conftest.py          # pytest integration: auto-discovery, execution, stats, allure, level filter, ExcelDrivenItem
 run.py               # CLI entry point (--env, --path, --report, --level, --workers)
 ```
@@ -63,7 +63,7 @@ python3 -m coverage report --show-missing
 ## Key Architecture Decisions
 
 - **Data-driven**: Test cases are pure data files. The framework parses and executes them automatically via `conftest.py` custom collector (`TestCaseFile` / `TestCaseItem`).
-- **Variable pool**: Three-tier priority (temp > module > global). Variables resolved via `${xxx}`. Single `${var}` preserves original type; embedded in string converts to str.
+- **Variable pool**: Three-tier priority (temp > module > global). Variables resolved via `${xxx}`. Single `${var}` preserves original type; embedded in string converts to str. Extract supports `scope: global` to store variables in global pool (survives file switches, used for cross-file token sharing).
 - **Execution flow per test case**: resolve vars (including case-level `base_url`) → db_setup (with extract) → re-resolve vars → before hook → (request → after hook → extract → db_extract → validate) with retry → db_teardown → log.
 - **pytest integration**: Custom `pytest_collect_file` discovers YAML/JSON/Excel files under `testcases/`. Each test case becomes a `TestCaseItem`. Excel-driven cases (with `excel_source` + `steps`) become `ExcelDrivenItem` (one per Excel row). `--level` filters at collection time. `--workers` uses xdist `loadfile` distribution.
 - **Excel-driven testing**: YAML testcase with `excel_source` + `steps` triggers data-driven mode. `body_from_excel` builds request body from Excel row data (with optional `field_mapping`). `validate_from_excel` recursively flattens Excel values into `eq` assertions (supports nested dict/list). Each Excel row generates an independent test item.

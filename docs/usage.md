@@ -540,9 +540,9 @@ steps:
 
 | 来源 | 优先级 | 说明 |
 |------|--------|------|
-| 临时变量 | 最高 | 用例级别覆盖 |
-| 模块变量 | 中 | `extract` 和 `db_extract` 提取的值 |
-| 全局变量 | 最低 | `config/{env}.yaml` 的 `global_variables` |
+| 临时变量 | 最高 | 用例级别覆盖（预留） |
+| 模块变量 | 中 | `extract`（默认）和 `db_extract` 提取的值，文件切换时清空 |
+| 全局变量 | 最低 | `config/{env}.yaml` 的 `global_variables`，或 `extract` 中 `scope: global` 提取的值 |
 
 ### 7.2 使用方式
 
@@ -570,12 +570,52 @@ body:
   name: "User ${id}" # 嵌入在字符串中时，转为字符串 "User 42"
 ```
 
-### 7.4 排错
+### 7.4 extract scope（跨文件共享变量）
+
+默认情况下，`extract` 提取的变量存在模块变量池中，切换 YAML 文件时会被清空。如需跨文件共享（如登录 token），可指定 `scope: global`：
+
+```yaml
+# testcases/common/login.yaml
+- name: 登录
+  method: POST
+  url: /api/login
+  body:
+    username: ${admin_user}
+    password: ${admin_pass}
+  extract:
+    token:
+      jsonpath: $.data.token
+      scope: global              # 存到全局变量池，跨文件可用
+  validate:
+    - eq: [$.code, 0]
+```
+
+```yaml
+# testcases/user/user_crud.yaml（无需重复登录）
+- name: 查询用户列表
+  method: GET
+  url: /api/users
+  headers:
+    Authorization: Bearer ${token}    # 跨文件引用
+  validate:
+    - eq: [$.code, 0]
+```
+
+**两种写法对比：**
+
+| 写法 | scope | 跨文件 |
+|------|-------|--------|
+| `token: $.data.token` | module（默认） | 不可跨文件 |
+| `token: {jsonpath: $.data.token, scope: global}` | global | 可跨文件 |
+
+> 同一个 extract 中可以混合使用：部分字段 global，部分字段 module。
+
+### 7.5 排错
 
 如果变量未找到，日志中会输出警告：`Unresolved variable: ${xxx}`。常见原因：
 - 变量名拼写错误
 - 提取变量的上游用例失败了
-- 跨文件引用（不同 YAML 文件间变量不共享）
+- 跨文件引用但没加 `scope: global`（不同 YAML 文件间默认不共享变量）
 
 ---
 

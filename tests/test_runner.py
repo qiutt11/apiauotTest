@@ -496,3 +496,96 @@ def test_no_case_base_url_uses_global(mock_send):
     assert result["passed"] is True
     call_kwargs = mock_send.call_args[1]
     assert call_kwargs["url"] == "https://default.com/api/test"
+
+
+# ---------------------------------------------------------------------------
+# Extract scope tests (global vs module)
+# ---------------------------------------------------------------------------
+@patch("common.runner.send_request")
+def test_extract_scope_global_stores_in_global_pool(mock_send):
+    """extract with scope: global should store in global pool, surviving clear_module."""
+    mock_send.return_value = {
+        "status_code": 200,
+        "body": {"code": 0, "data": {"token": "global-token-123"}},
+        "headers": {}, "elapsed_ms": 50, "error": None,
+    }
+
+    pool = VariablePool()
+    case = {
+        "name": "登录",
+        "method": "POST",
+        "url": "/api/login",
+        "body": {"username": "admin"},
+        "extract": {
+            "token": {"jsonpath": "$.data.token", "scope": "global"},
+        },
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30)
+    assert result["passed"] is True
+
+    # token 应存在全局池中
+    assert pool.get("token") == "global-token-123"
+
+    # 清空模块变量后，token 仍然可用（因为存在全局池）
+    pool.clear_module()
+    assert pool.get("token") == "global-token-123"
+
+
+@patch("common.runner.send_request")
+def test_extract_scope_module_cleared_on_file_switch(mock_send):
+    """extract without scope (default module) should be cleared on clear_module."""
+    mock_send.return_value = {
+        "status_code": 200,
+        "body": {"code": 0, "data": {"token": "module-token"}},
+        "headers": {}, "elapsed_ms": 50, "error": None,
+    }
+
+    pool = VariablePool()
+    case = {
+        "name": "登录",
+        "method": "POST",
+        "url": "/api/login",
+        "extract": {"token": "$.data.token"},  # 默认 scope: module
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30)
+    assert result["passed"] is True
+    assert pool.get("token") == "module-token"
+
+    # 清空模块变量后，token 消失
+    pool.clear_module()
+    assert pool.get("token") is None
+
+
+@patch("common.runner.send_request")
+def test_extract_mixed_scope(mock_send):
+    """同一个 extract 中混合 global 和 module scope。"""
+    mock_send.return_value = {
+        "status_code": 200,
+        "body": {"code": 0, "data": {"token": "t123", "request_id": "req-456"}},
+        "headers": {}, "elapsed_ms": 50, "error": None,
+    }
+
+    pool = VariablePool()
+    case = {
+        "name": "登录",
+        "method": "POST",
+        "url": "/api/login",
+        "extract": {
+            "token": {"jsonpath": "$.data.token", "scope": "global"},
+            "request_id": "$.data.request_id",  # 默认 module
+        },
+        "validate": [{"eq": ["$.code", 0]}],
+    }
+    result = run_testcase(case, base_url="https://test.com", pool=pool, timeout=30)
+    assert result["passed"] is True
+
+    # 两个都能取到
+    assert pool.get("token") == "t123"
+    assert pool.get("request_id") == "req-456"
+
+    # clear_module 后：global 的保留，module 的消失
+    pool.clear_module()
+    assert pool.get("token") == "t123"
+    assert pool.get("request_id") is None

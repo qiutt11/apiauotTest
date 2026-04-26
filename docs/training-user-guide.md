@@ -253,7 +253,11 @@ testcases:
     body:                           # 可选，JSON 请求体
       username: admin
     extract:                        # 可选，从响应中提取变量
-      token: $.data.token
+      token: $.data.token           #   简写（module 作用域）
+      # 或完整写法：
+      # token:
+      #   jsonpath: $.data.token
+      #   scope: global             #   global=跨文件可用
     db_setup:                       # 可选，请求前执行 SQL
       - sql: "INSERT INTO ..."
     db_extract:                     # 可选，请求后查询数据库
@@ -301,8 +305,8 @@ testcases:
 ### 4. 变量作用域
 
 - **同一 YAML 文件内**：用例间共享变量（前面 extract 的后面可用）
-- **不同 YAML 文件间**：变量互相隔离（切换文件时自动清理）
-- **全局变量**：config 中定义，所有文件都可用
+- **不同 YAML 文件间**：默认隔离（切换文件时自动清理模块变量）
+- **全局变量**：config 中定义，或 `extract` 指定 `scope: global`，所有文件都可用
 
 ---
 
@@ -403,6 +407,27 @@ body:
   user_id: ${id}        # id=42 → 发送 42（int），不是 "42"
   name: "User ${id}"    # 嵌入字符串 → "User 42"（str）
 ```
+
+### 4. extract scope（跨文件共享变量）
+
+默认 extract 的变量只在当前文件内可用。加 `scope: global` 可跨文件共享（典型场景：登录 token）：
+
+```yaml
+# testcases/common/login.yaml
+extract:
+  token:
+    jsonpath: $.data.token
+    scope: global              # 存全局，跨文件可用
+
+# testcases/user/user_crud.yaml（无需重复登录）
+headers:
+  Authorization: Bearer ${token}    # 直接引用
+```
+
+| 写法 | 作用域 | 跨文件 |
+|------|--------|--------|
+| `token: $.data.token` | module（默认） | 否 |
+| `token: {jsonpath: $.data.token, scope: global}` | global | 是 |
 
 ---
 

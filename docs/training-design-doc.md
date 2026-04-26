@@ -101,7 +101,7 @@ run_testcase()
    ├──→ hook_manager.call(before) → 请求前处理
    ├──→ send_request() → HTTP 请求
    ├──→ hook_manager.call(after) → 响应后处理
-   ├──→ extract_fields() → 提取变量 → pool.set_module()
+   ├──→ extract_fields() → 提取变量 → set_global(scope:global) / set_module(默认)
    ├──→ db_handler.execute_extract() → 数据库校验
    ├──→ validate_case() → 断言校验
    └──→ db_handler.execute_teardown() → 清理（finally）
@@ -238,9 +238,13 @@ send_request(method, url, headers, body, timeout) → {
 ```python
 extract_by_jsonpath(data, "$.data.token") → "abc123"
 extract_fields(response_body, {"token": "$.data.token"}) → {"token": "abc123"}
+extract_fields(response_body, {"token": {"jsonpath": "$.data.token", "scope": "global"}}) → {"token": "abc123"}
+get_extract_scope(extract_config, "token") → "global" 或 "module"
 ```
 
-基于 `jsonpath-ng` 库，匹配第一个结果，未匹配返回 None。
+- 基于 `jsonpath-ng` 库，匹配第一个结果，未匹配返回 None
+- `extract_fields()` 兼容简写（`str`）和完整格式（`dict` 含 jsonpath + scope）
+- `get_extract_scope()` 返回变量的 scope 配置，runner 据此决定存全局还是模块
 
 ### 3.6 `validator.py` — 断言校验
 
@@ -378,6 +382,7 @@ _flatten_excel_validations("$.data", {"name": "张三", "tags": ["vip"], "addr":
 │       │ 找不到 ↓                              │
 │  ┌────▼────┐  全局变量                        │
 │  │ _global  │  config.global_variables        │
+│  │          │  + extract scope:global 的值     │
 │  └─────────┘                                 │
 │                                              │
 │  resolve(data):                              │
@@ -597,6 +602,7 @@ maybe_send_notification(email_config, feishu_config, stats, send_on)
 | 并行策略 | xdist loadfile | 同文件顺序（保证依赖），跨文件并行 |
 | 通知 | 邮件 + 飞书 | 覆盖传统和 IM 两种渠道 |
 | float→int | `25.0 == int(25.0)` 时转换 | openpyxl 默认行为修正 |
+| extract scope | global 存全局池，module 存模块池 | 登录 token 等需跨文件共享，兼容原写法 |
 | 配置合并 | 递归深合并 | 保留未覆盖的嵌套键 |
 
 ---
