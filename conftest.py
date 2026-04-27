@@ -18,7 +18,7 @@ import allure
 import pytest
 
 from common.config_loader import load_config
-from common.data_loader import load_testcases, load_excel_rows
+from common.data_loader import load_testcases, load_yaml_datasets
 from common.variable_pool import VariablePool
 from common.runner import run_testcase
 from common.hook_manager import HookManager
@@ -112,6 +112,9 @@ def pytest_collect_file(parent, file_path):
     if ext in (".yaml", ".yml", ".json", ".xlsx"):
         # 检查路径组件中是否包含 "testcases" 目录
         if any(part == "testcases" for part in file_path.parts):
+            # 跳过 data/ 子目录下的数据文件（yaml_source 引用的数据文件，不是用例）
+            if any(part == "data" for part in file_path.parts):
+                return None
             return TestCaseFile.from_parent(parent, path=file_path)
 
 
@@ -157,30 +160,28 @@ class TestCaseFile(pytest.File):
 
             name = case.get("name", f"case_{i}")
 
-            # ---- Excel 驱动用例 ----
-            # 当 YAML 中的 testcase 同时包含 excel_source 和 steps 字段时，
-            # 视为"Excel 数据驱动"用例：从 Excel 加载每行数据，每行生成一个
-            # ExcelDrivenItem，在运行时按 steps 顺序执行（如：保存→查看详情）。
-            if case.get("excel_source") and case.get("steps"):
-                excel_path = case["excel_source"]
-                # excel_source 支持相对路径，基于 YAML 文件所在目录解析
-                if not os.path.isabs(excel_path):
-                    excel_path = os.path.join(os.path.dirname(str(self.path)), excel_path)
-                if not os.path.exists(excel_path):
+            # ---- YAML 数据驱动用例 ----
+            # 当 YAML 中的 testcase 同时包含 yaml_source 和 steps 字段时，
+            # 视为"YAML 数据驱动"用例：从 YAML 数据文件加载多组嵌套数据，
+            # 每组数据生成一个 DataDrivenItem，在运行时按 steps 顺序执行。
+            if case.get("yaml_source") and case.get("steps"):
+                data_path = case["yaml_source"]
+                # 支持相对路径，基于 YAML 文件所在目录解析
+                if not os.path.isabs(data_path):
+                    data_path = os.path.join(os.path.dirname(str(self.path)), data_path)
+                if not os.path.exists(data_path):
                     raise FileNotFoundError(
-                        f"Excel data file not found: {excel_path} "
-                        f"(referenced by excel_source in {self.path})"
+                        f"YAML data file not found: {data_path} "
+                        f"(referenced by yaml_source in {self.path})"
                     )
-                rows = load_excel_rows(excel_path)
-                for row_idx, row_data in enumerate(rows):
-                    # 用 Excel 行的第一列值作为用例名后缀，方便在报告中区分不同行数据
-                    # 例如："保存并验证详情[张三]"、"保存并验证详情[李四]"
-                    first_val = next(iter(row_data.values()), row_idx)
-                    item_name = f"{name}[{first_val}]"
-                    yield ExcelDrivenItem.from_parent(
+                datasets = load_yaml_datasets(data_path)
+                for ds_idx, dataset in enumerate(datasets):
+                    label = dataset.get("label", f"data_{ds_idx}")
+                    item_name = f"{name}[{label}]"
+                    yield DataDrivenItem.from_parent(
                         self, name=item_name,
-                        steps=case["steps"], row_data=row_data,
-                        row_index=row_idx, module_name=module_name,
+                        steps=case["steps"], dataset=dataset,
+                        dataset_index=ds_idx, module_name=module_name,
                     )
                 continue
 
@@ -289,135 +290,139 @@ class TestCaseItem(pytest.Item):
 
 
 # ==========================================================================
-# Excel 驱动用例的辅助函数
+# YAML 数据驱动用例的辅助函数
 # ==========================================================================
-def _flatten_excel_validations(prefix: str, value) -> list[dict]:
-    """递归展开 Excel 值为 eq 断言列表。
+def _get_by_path(data: dict, path: str):
+    """按点分路径从嵌套 dict 中取值。
 
-    根据值的类型递归生成 JSONPath 断言：
-        - 简单值（str/int/float/bool）→ 直接生成 eq 断言
-        - dict 嵌套对象 → 递归展开每个 key，如 $.data.address.city
-        - list 数组 → 按下标展开，如 $.data.tags[0]
-        - 数组内嵌套对象 → 继续递归，如 $.data.items[0].name
+    支持语法：
+        "name"                → data["name"]
+        "userInfo.name"       → data["userInfo"]["name"]
+        "userInfo.contacts"   → data["userInfo"]["contacts"]（可能是 list）
 
-    示例：
-        prefix="$.data", value={"name": "张三", "tags": ["vip"]}
-        → [{"eq": ["$.data.name", "张三"]}, {"eq": ["$.data.tags[0]", "vip"]}]
+    路径中任意一级不存在则返回 _MISSING 哨兵。
+    """
+    current = data
+    for key in path.split("."):
+        if isinstance(current, dict) and key in current:
+            current = current[key]
+        else:
+            return _MISSING
+    return current
+
+
+# 哨兵对象，用于区分"值为 None"和"路径不存在"
+_MISSING = object()
+
+
+def _build_yaml_validations(dataset: dict, mapping: dict) -> list[dict]:
+    """根据路径映射，从数据集中取值生成 eq 断言列表。
+
+    mapping 格式：{数据路径: 响应JSONPath}
+        - 简单字段：  "status": "$.data.userStatus"
+        - 嵌套字段：  "userInfo.name": "$.data.basicInfo.userName"
+        - 数组字段：  "tags[]": "$.data.tagNames[]"
+        - 数组内字段："userInfo.contacts[].type": "$.data.contactList[].contactType"
+
+    [] 表示数组通配：自动按下标展开（data_path 和 response_path 的 [] 一一对应）。
+    路径在数据中不存在时自动跳过（不报错）。
 
     Args:
-        prefix: JSONPath 前缀（如 "$.data.name"）
-        value: Excel 单元格解析后的值
+        dataset: 一组测试数据（嵌套 dict）
+        mapping: {数据路径: 响应JSONPath} 映射字典
 
     Returns:
-        断言列表，如 [{"eq": ["$.data.name", "张三"]}, ...]
+        断言列表，如 [{"eq": ["$.data.userName", "张三"]}, ...]
     """
     validations = []
+    for data_path, response_path in mapping.items():
+        # 处理数组通配符 []
+        if "[]" in data_path:
+            _expand_array_mapping(dataset, data_path, response_path, validations)
+        else:
+            value = _get_by_path(dataset, data_path)
+            if value is not _MISSING:
+                _flatten_value(response_path, value, validations)
+    return validations
+
+
+def _expand_array_mapping(
+    dataset: dict, data_path: str, response_path: str, validations: list
+):
+    """展开数组通配符映射。
+
+    例如 data_path="userInfo.contacts[].type", response_path="$.data.contactList[].contactType"
+    → 找到 dataset["userInfo"]["contacts"] 是一个 list
+    → 遍历每个元素，替换 [] 为 [0], [1], ...
+    → 对每个元素取 ".type" 的值，生成断言
+    """
+    # 按第一个 [] 拆分
+    before_bracket = data_path.split("[]", 1)[0]   # "userInfo.contacts"
+    after_bracket = data_path.split("[]", 1)[1]     # ".type" 或 ""
+
+    # 取数组本身
+    array_data = _get_by_path(dataset, before_bracket)
+    if array_data is _MISSING or not isinstance(array_data, list):
+        return
+
+    # 响应路径也按 [] 拆分
+    resp_before = response_path.split("[]", 1)[0]   # "$.data.contactList"
+    resp_after = response_path.split("[]", 1)[1]     # ".contactType" 或 ""
+
+    for i, item in enumerate(array_data):
+        if after_bracket:
+            # 有后续路径，如 ".type" → 去掉开头的 "."
+            sub_path = after_bracket.lstrip(".")
+            if "[]" in sub_path:
+                # 多层数组嵌套（递归处理）
+                _expand_array_mapping(
+                    item, sub_path,
+                    f"{resp_before}[{i}]{resp_after}",
+                    validations,
+                )
+            else:
+                value = _get_by_path(item, sub_path) if isinstance(item, dict) else _MISSING
+                if value is not _MISSING:
+                    _flatten_value(f"{resp_before}[{i}]{resp_after}", value, validations)
+        else:
+            # 没有后续路径，数组元素本身就是值（如 tags[] → ["vip", "new"]）
+            _flatten_value(f"{resp_before}[{i}]", item, validations)
+
+
+def _flatten_value(jsonpath: str, value, validations: list):
+    """将值递归展开为 eq 断言（处理嵌套 dict/list）。"""
     if isinstance(value, dict):
         for k, v in value.items():
-            validations.extend(_flatten_excel_validations(f"{prefix}.{k}", v))
+            _flatten_value(f"{jsonpath}.{k}", v, validations)
     elif isinstance(value, list):
         for i, item in enumerate(value):
-            validations.extend(_flatten_excel_validations(f"{prefix}[{i}]", item))
+            _flatten_value(f"{jsonpath}[{i}]", item, validations)
     else:
-        validations.append({"eq": [prefix, value]})
-    return validations
+        validations.append({"eq": [jsonpath, value]})
 
 
-def _build_body_from_excel(row_data: dict, body_from_excel) -> dict:
-    """根据 body_from_excel 配置，将 Excel 行数据转换为请求 body。
+class DataDrivenItem(pytest.Item):
+    """YAML 数据驱动的多步骤测试用例执行器。
 
-    两种用法：
-        1. body_from_excel: true
-           → 所有 Excel 列直接作为 body 字段（列名 = 字段名）
-        2. body_from_excel: + field_mapping:
-           → Excel 列名通过 mapping 映射到接口字段名，未映射的列仍用原名
-           示例：field_mapping: {name: userName} → Excel 的 name 列 → body 的 userName 字段
-
-    Args:
-        row_data: Excel 行数据字典（{列名: 值}）
-        body_from_excel: True 或 dict（含 field_mapping）
-
-    Returns:
-        请求 body 字典
-    """
-    # body_from_excel: true → 直接使用 Excel 列名作为字段名
-    if body_from_excel is True:
-        return dict(row_data)
-
-    # body_from_excel: {field_mapping: {excel列名: 接口字段名}} → 映射后作为 body
-    if isinstance(body_from_excel, dict):
-        mapping = body_from_excel.get("field_mapping", {})
-        body = {}
-        for col, val in row_data.items():
-            # 在 mapping 中查找映射名，找不到则用原列名
-            field_name = mapping.get(col, col)
-            body[field_name] = val
-        return body
-
-    return dict(row_data)
-
-
-def _build_excel_validations(row_data: dict, validate_from_excel: dict) -> list[dict]:
-    """根据 validate_from_excel 配置，将 Excel 行数据转换为 eq 断言列表。
-
-    工作方式：
-        1. 从配置中读取 prefix（JSONPath 前缀，默认 $.data）和可选的 field_mapping
-        2. 遍历 Excel 行的每列数据
-        3. 通过 field_mapping 将 Excel 列名映射为响应字段名（未映射则用原列名）
-        4. 调用 _flatten_excel_validations 递归展开为 eq 断言
-
-    示例：
-        Excel 列 name="张三"，mapping={name: user_name}，prefix=$.data
-        → 生成断言 {"eq": ["$.data.user_name", "张三"]}
-
-    Args:
-        row_data: Excel 行数据字典（{列名: 值}）
-        validate_from_excel: 配置字典，含 prefix 和可选 field_mapping
-
-    Returns:
-        断言列表，如 [{"eq": ["$.data.name", "张三"]}, ...]
-    """
-    prefix = validate_from_excel.get("prefix", "$.data")
-    mapping = validate_from_excel.get("field_mapping", {})
-    validations = []
-    for col, val in row_data.items():
-        field_name = mapping.get(col, col)
-        validations.extend(_flatten_excel_validations(f"{prefix}.{field_name}", val))
-    return validations
-
-
-class ExcelDrivenItem(pytest.Item):
-    """Excel 驱动的多步骤测试用例执行器。
-
-    每个实例对应 Excel 中的一行数据，按 steps 顺序执行保存→详情等多步操作。
+    每个实例对应 YAML 数据文件中的一组数据（一个 dataset），
+    按 steps 顺序执行保存→详情等多步操作。
     """
 
-    def __init__(self, name, parent, steps, row_data, row_index, module_name=""):
-        """初始化 Excel 驱动用例。
-
-        Args:
-            name: 用例名（含 Excel 行标识，如 "保存并验证详情[张三]"）
-            parent: 父 pytest 节点（TestCaseFile）
-            steps: YAML 中定义的步骤列表（每个 step 是一个 case 字典）
-            row_data: 当前 Excel 行的数据字典（{列名: 值}）
-            row_index: Excel 行号（从 0 开始，用于调试）
-            module_name: 所属模块名（显示在 Allure 报告中）
-        """
+    def __init__(self, name, parent, steps, dataset, dataset_index, module_name=""):
         super().__init__(name, parent)
-        self._steps = steps          # YAML 中定义的步骤列表
-        self._row_data = row_data    # 当前 Excel 行数据
-        self._row_index = row_index  # Excel 行索引
+        self._steps = steps
+        self._dataset = dataset            # 当前数据组（嵌套 dict）
+        self._dataset_index = dataset_index
         self._module_name = module_name
         self.user_properties.append(("module", module_name))
 
     def runtest(self):
-        """执行 Excel 驱动的多步骤用例（由 pytest 调用）。
+        """执行 YAML 数据驱动的多步骤用例。
 
         执行流程：
-            1. 将 Excel 行数据注入变量池（可通过 ${列名} 引用）
-            2. 遍历 steps，对每个 step：
-               a. 若有 body_from_excel，将 Excel 行数据转换为请求 body
-               b. 若有 validate_from_excel，将 Excel 行数据展开为 eq 断言
+            1. 遍历 steps，对每个 step：
+               a. 若有 body_from_yaml: true，将 dataset（去掉 label）作为请求 body
+               b. 若有 validate_from_yaml，按路径映射生成 eq 断言
                c. 调用 run_testcase() 执行
                d. 任一 step 失败则整体失败，停止后续 step
         """
@@ -428,45 +433,35 @@ class ExcelDrivenItem(pytest.Item):
         hooks = config._autotest_hooks
         db = config._autotest_db
 
-        # 文件切换时清空模块变量（与 TestCaseItem 保持一致的隔离逻辑）
+        # 文件切换时清空模块变量
         current_file = str(self.path)
         if config._autotest_current_file != current_file:
             pool.clear_module()
             config._autotest_current_file = current_file
 
-        # 将 Excel 行数据写入变量池，使 step 中可通过 ${列名} 引用
-        # 例如 Excel 有 name 列，则 url: /api/user/${name} 会被替换
-        for col, val in self._row_data.items():
-            pool.set_module(col, val)
-
         # 设置 Allure 报告标签
         allure.dynamic.feature(self._module_name)
         allure.dynamic.story(self.name)
 
-        # ---- 逐步执行 steps ----
+        # 逐步执行 steps
         for step_index, step in enumerate(self._steps):
-            # 深拷贝 step，避免修改 YAML 原始数据（多行数据共享同一 steps 定义，
-            # 浅拷贝会导致嵌套 dict 如 headers 在行间共享引用）
             step_case = copy.deepcopy(step)
             step_name = step_case.get("name", f"step_{step_index}")
 
-            # body_from_excel：将 Excel 行数据转换为请求 body
-            # 支持直接映射（true）或字段名映射（field_mapping）
-            if step_case.get("body_from_excel"):
-                step_case["body"] = _build_body_from_excel(
-                    self._row_data, step_case.pop("body_from_excel")
-                )
+            # body_from_yaml: true → dataset 去掉 label 字段后作为请求 body
+            if step_case.get("body_from_yaml"):
+                body = {k: v for k, v in self._dataset.items() if k != "label"}
+                step_case["body"] = body
+                step_case.pop("body_from_yaml")
 
-            # validate_from_excel：将 Excel 行数据递归展开为 eq 断言
-            # 生成的断言追加到 validate 列表末尾（保留原有的 validate 断言）
-            if step_case.get("validate_from_excel"):
-                excel_validations = _build_excel_validations(
-                    self._row_data, step_case.pop("validate_from_excel")
-                )
+            # validate_from_yaml: {数据路径: 响应JSONPath} → 生成 eq 断言
+            if step_case.get("validate_from_yaml"):
+                mapping = step_case.pop("validate_from_yaml")
+                yaml_validations = _build_yaml_validations(self._dataset, mapping)
                 existing = step_case.get("validate", [])
-                step_case["validate"] = existing + excel_validations
+                step_case["validate"] = existing + yaml_validations
 
-            # 调用现有的核心执行引擎（与 TestCaseItem 使用同一套逻辑）
+            # 调用核心执行引擎
             result = run_testcase(
                 case=step_case,
                 base_url=cfg["base_url"],
@@ -478,7 +473,7 @@ class ExcelDrivenItem(pytest.Item):
                 default_retry=cfg.get("retry", 0),
             )
 
-            # 记录完整的请求/响应日志
+            # 记录日志
             log_request(
                 logger=logger,
                 module=self._module_name,
@@ -497,7 +492,7 @@ class ExcelDrivenItem(pytest.Item):
                 ],
             )
 
-            # 任一 step 失败则整体失败，停止执行后续 step
+            # 任一 step 失败则整体失败
             if not result["passed"]:
                 failures = []
                 if result.get("error"):

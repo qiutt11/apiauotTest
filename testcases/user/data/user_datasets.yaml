@@ -1,0 +1,28 @@
+# 用户测试数据集（每组 = 保存接口的 body 结构）
+# label 字段用于在报告中标识，不会作为 body 发送
+
+- label: 张三-完整信息
+  userInfo:
+    name: 张三
+    age: 25
+    contacts:
+      - type: phone
+        value: "13800001111"
+      - type: email
+        value: "zhangsan@test.com"
+  tags:
+    - vip
+    - new
+  status: 1
+
+- label: 李四-只有手机号
+  userInfo:
+    name: 李四
+    age: 30
+    contacts:
+      - type: phone
+        value: "13900002222"
+  tags:
+    - normal
+  status: 1
+  remark: "VIP客户转介绍"

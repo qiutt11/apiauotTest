@@ -24,7 +24,7 @@ A data-driven API automation testing framework built with Python + pytest. Users
 ```
 common/              # Core framework modules (DO NOT modify for normal use)
   config_loader.py   # Multi-environment config loading (deep merge)
-  data_loader.py     # YAML/JSON/Excel test case parsing + load_excel_rows() for Excel-driven data
+  data_loader.py     # YAML/JSON/Excel test case parsing + load_yaml_datasets() for data-driven
   variable_pool.py   # Three-tier variable storage, ${xxx} resolution, type preservation
   extractor.py       # JSONPath response data extraction
   validator.py       # 10 assertion keywords (eq, neq, gt, lt, gte, lte, contains, not_null, type, length)
@@ -37,8 +37,8 @@ common/              # Core framework modules (DO NOT modify for normal use)
 config/              # Environment configs (config.yaml + per-env files)
 testcases/           # Test case data files (YAML/JSON/Excel)
 hooks/               # User-defined hook functions
-tests/               # 163 tests (137 unit + 21 integration + 5 level filter)
-conftest.py          # pytest integration: auto-discovery, execution, stats, allure, level filter, ExcelDrivenItem
+tests/               # 154 tests (128 unit + 21 integration + 5 level filter)
+conftest.py          # pytest integration: auto-discovery, execution, stats, allure, level filter, DataDrivenItem
 run.py               # CLI entry point (--env, --path, --report, --level, --workers)
 ```
 
@@ -65,8 +65,8 @@ python3 -m coverage report --show-missing
 - **Data-driven**: Test cases are pure data files. The framework parses and executes them automatically via `conftest.py` custom collector (`TestCaseFile` / `TestCaseItem`).
 - **Variable pool**: Three-tier priority (temp > module > global). Variables resolved via `${xxx}`. Single `${var}` preserves original type; embedded in string converts to str. Extract supports `scope: global` to store variables in global pool (survives file switches, used for cross-file token sharing).
 - **Execution flow per test case**: resolve vars (including case-level `base_url`) → db_setup (with extract) → re-resolve vars → before hook → (request → after hook → extract → db_extract → validate) with retry → db_teardown → log.
-- **pytest integration**: Custom `pytest_collect_file` discovers YAML/JSON/Excel files under `testcases/`. Each test case becomes a `TestCaseItem`. Excel-driven cases (with `excel_source` + `steps`) become `ExcelDrivenItem` (one per Excel row). `--level` filters at collection time. `--workers` uses xdist `loadfile` distribution.
-- **Excel-driven testing**: YAML testcase with `excel_source` + `steps` triggers data-driven mode. `body_from_excel` builds request body from Excel row data (with optional `field_mapping`). `validate_from_excel` recursively flattens Excel values into `eq` assertions (supports nested dict/list). Each Excel row generates an independent test item.
+- **pytest integration**: Custom `pytest_collect_file` discovers YAML/JSON/Excel files under `testcases/` (skips `data/` subdirectories). Each test case becomes a `TestCaseItem`. YAML data-driven cases (with `yaml_source` + `steps`) become `DataDrivenItem` (one per dataset). `--level` filters at collection time. `--workers` uses xdist `loadfile` distribution.
+- **YAML data-driven testing**: YAML testcase with `yaml_source` + `steps` triggers data-driven mode. Data file stores nested body structures. `body_from_yaml` sends dataset as request body. `validate_from_yaml` uses path mapping (data_path → response_jsonpath) to auto-generate assertions. Supports nested objects, arrays with `[]` wildcard, and missing field auto-skip. Each dataset generates an independent test item.
 - **Notifications**: Email (SMTP_SSL) and Feishu (webhook card with color-coded header and @mentions).
 
 ## Conventions

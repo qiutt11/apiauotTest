@@ -300,213 +300,144 @@ testcases:
 
 ---
 
-## 5. Excel 驱动用例（保存+详情验证）
+## 5. YAML 数据驱动用例（保存+详情对比验证）
 
-当接口的请求/响应字段很多（如保存接口有 20+ 字段，详情接口需逐一比对）时，在 YAML 中逐行写断言非常繁琐。**Excel 驱动用例**将字段数据放在 Excel 中，框架自动生成请求 body 和验证断言。
+当保存接口字段多、层层嵌套、入参和反参字段名不同时，逐个写断言非常繁琐。**YAML 数据驱动**将测试数据存在独立的 YAML 数据文件中（天生支持嵌套），通过路径映射自动生成断言。
 
 ### 5.1 适用场景
 
-- 保存接口 → 查看详情接口，需要验证保存的每个字段是否正确回显
-- 字段多（10+），需要逐一比对
-- 多组测试数据（Excel 每行一组，自动展开为独立用例）
+- 保存接口 → 详情接口，需要验证每个字段是否正确回显
+- 字段多（10+）、层层嵌套（如 `userInfo.contacts[].type`）
+- 入参和反参字段名不一致（如 `name` → `userName`）
+- 多组测试数据（每组一个 dataset，自动展开为独立用例）
+- 不同数据组字段可以不同（缺失字段自动跳过）
 
-### 5.2 YAML 结构
+### 5.2 工作方式
 
-在 `testcases` 数组中，使用 `excel_source` + `steps` 标识 Excel 驱动用例：
+你需要写 2 个文件：
+
+1. **数据文件**（YAML）：存储测试数据，每组是保存接口的 body 结构
+2. **用例文件**（YAML）：定义接口步骤 + 字段映射（定义一次，所有数据组共用）
+
+### 5.3 数据文件格式
+
+数据文件放在 `testcases/模块/data/` 目录下，YAML 列表格式，每项是一组嵌套数据：
 
 ```yaml
+# testcases/user/data/user_datasets.yaml
+- label: 张三-完整信息            # label 用于报告中标识，不作为 body 发送
+  userInfo:
+    name: 张三
+    age: 25
+    contacts:
+      - type: phone
+        value: "13800001111"
+      - type: email
+        value: "zhangsan@test.com"
+  tags: [vip, new]
+  status: 1
+
+- label: 李四-只有手机号
+  userInfo:
+    name: 李四
+    age: 30
+    contacts:
+      - type: phone
+        value: "13900002222"
+  tags: [normal]
+  status: 1
+  remark: "VIP客户转介绍"          # 李四比张三多了 remark，框架自动适应
+```
+
+### 5.4 用例文件格式
+
+```yaml
+# testcases/user/user_save_detail.yaml
 module: 用户管理
 testcases:
-  # 普通用例（走原有逻辑，不受影响）
   - name: 登录获取token
-    level: P0
     method: POST
     url: /api/login
-    body:
-      username: ${admin_user}
-      password: ${admin_pass}
+    body: {username: ${admin_user}, password: ${admin_pass}}
     extract:
-      token: $.data.token
+      token: {jsonpath: $.data.token, scope: global}
     validate:
       - eq: [$.code, 0]
 
-  # Excel 驱动用例
-  - name: 保存并验证用户详情
-    level: P0
-    excel_source: data/user_data.xlsx    # Excel 路径（相对于 YAML 文件所在目录）
+  - name: 创建用户并验证详情
+    yaml_source: data/user_datasets.yaml       # 数据文件路径（相对于本 YAML）
     steps:
       - name: 保存用户
         method: POST
         url: /api/user/save
         headers:
           Authorization: Bearer ${token}
-        body_from_excel: true             # 用 Excel 行数据作为请求 body
+        body_from_yaml: true                   # dataset 去掉 label 后作为 body
         extract:
           id: $.data.id
         validate:
           - eq: [$.code, 0]
 
-      - name: 查看用户详情
+      - name: 验证用户详情
         method: GET
         url: /api/user/detail/${id}
         headers:
           Authorization: Bearer ${token}
-        validate_from_excel:              # 用 Excel 行数据生成断言
-          prefix: $.data
+        validate_from_yaml:                    # 路径映射（定义一次，所有数据组共用）
+          userInfo.name: $.data.basicInfo.userName
+          userInfo.age: $.data.basicInfo.userAge
+          userInfo.contacts[].type: $.data.contactList[].contactType
+          userInfo.contacts[].value: $.data.contactList[].contactValue
+          tags[]: $.data.tagNames[]
+          status: $.data.userStatus
+          remark: $.data.remark
         validate:
           - eq: [$.code, 0]
 ```
 
-Excel 每行数据会生成一个独立的测试用例，按 steps 顺序执行。报告中显示为：`保存并验证用户详情[张三]`、`保存并验证用户详情[李四]`。
+报告中显示：`创建用户并验证详情[张三-完整信息]`、`创建用户并验证详情[李四-只有手机号]`
 
-### 5.3 Excel 文件格式
+### 5.5 validate_from_yaml 映射语法
 
-| name | age | phone  | tags            | address                        |
-|------|-----|--------|-----------------|--------------------------------|
-| 张三 | 25  | 138xxx | ["vip","new"]   | {"city":"北京","street":"xx路"} |
-| 李四 | 30  | 139xxx | ["normal"]      | {"city":"上海","street":"yy路"} |
+| 语法 | 含义 | 示例 |
+|------|------|------|
+| `字段名` | 顶层字段 | `status: $.data.userStatus` |
+| `a.b.c` | 嵌套取值 | `userInfo.name: $.data.basicInfo.userName` |
+| `a[]` | 数组每个元素 | `tags[]: $.data.tagNames[]` |
+| `a[].b` | 数组内每个元素的字段 | `contacts[].type: $.data.contactList[].contactType` |
 
-- 第一行 = 表头（列名）
-- 每行 = 一组测试数据
-- 简单值（字符串、数字）直接填写
-- 复杂值（数组、嵌套对象）在单元格中写 JSON 字符串，框架自动解析
+**路径在数据中不存在时自动跳过**（不报错）。例如张三没有 `remark`，该映射自动跳过。
 
-### 5.4 body_from_excel 用法
+### 5.6 跨系统场景
 
-将 Excel 行数据自动转换为请求 body。
-
-**直接映射**（列名 = 接口字段名）：
+step 中可用 `base_url` 覆盖全局地址（支持 `${变量}` 引用）：
 
 ```yaml
-body_from_excel: true
-```
-
-Excel 列 `name`、`age`、`phone` → body 为 `{"name": "张三", "age": 25, "phone": "138xxx"}`
-
-**字段名映射**（列名与接口字段名不一致时）：
-
-```yaml
-body_from_excel:
-  field_mapping:
-    name: userName        # Excel 的 name 列 → body 的 userName 字段
-    phone: phoneNumber    # Excel 的 phone 列 → body 的 phoneNumber 字段
-```
-
-未映射的列仍使用原列名（如 `age` 没有映射，body 中就是 `age`）。
-
-### 5.5 validate_from_excel 用法
-
-将 Excel 行数据自动转换为 `eq` 断言，与详情接口响应逐字段比对。
-
-**基本用法：**
-
-```yaml
-validate_from_excel:
-  prefix: $.data       # 详情响应中字段的 JSONPath 前缀
-```
-
-Excel 列 `name`，值为 `"张三"` → 自动生成断言 `eq: [$.data.name, "张三"]`
-
-**字段名映射**（响应字段名与 Excel 列名不一致时）：
-
-```yaml
-validate_from_excel:
-  prefix: $.data
-  field_mapping:
-    name: user_name      # Excel 的 name 列 → 断言 $.data.user_name
-    phone: phone_number
-```
-
-**复杂值自动递归展开：**
-
-| Excel 值类型 | 生成的断言 | 示例 |
-|-------------|-----------|------|
-| 简单值 | `eq: [prefix.col, value]` | `eq: [$.data.name, "张三"]` |
-| dict 嵌套 | 递归展开每个 key | `eq: [$.data.address.city, "北京"]` |
-| list 数组 | 按下标展开 | `eq: [$.data.tags[0], "vip"]` |
-| 数组内嵌套对象 | 继续递归 | `eq: [$.data.items[0].name, "x"]` |
-
-### 5.6 变量传递
-
-Excel 行数据会自动写入变量池，在 steps 中可以通过 `${列名}` 引用：
-
-```yaml
-steps:
-  - name: 保存
-    url: /api/user/save
-    body_from_excel: true
-    extract:
-      id: $.data.id          # 提取保存返回的 ID
-    validate:
-      - eq: [$.code, 0]
-
-  - name: 查看详情
-    url: /api/user/detail/${id}   # 使用上一步提取的 ID
-    validate_from_excel:
-      prefix: $.data
-```
-
-前一个 step 的 extract 变量在后续 step 中可直接使用，与普通用例的变量传递规则一致。
-
-### 5.7 注意事项
-
-- `excel_source` 路径相对于 YAML 文件所在目录（也支持绝对路径）
-- 普通用例和 Excel 驱动用例可以混合写在同一个 YAML 文件中
-- Excel 驱动用例同样支持 `level` 优先级过滤
-- 任一 step 失败则整个用例失败，后续 step 不再执行
-- `validate` 中手写的断言会保留，`validate_from_excel` 生成的断言追加在后面
-
-### 5.8 跨系统场景（不同 step 调用不同系统）
-
-当保存接口和详情接口在不同系统时，可以在 step 中使用 `base_url` 覆盖全局地址：
-
-```yaml
-- name: 跨系统保存并查询
-  excel_source: data/order_data.xlsx
-  steps:
-    # Step 1: 调用 A 系统保存
-    - name: A系统保存订单
-      base_url: https://api-a.example.com     # 覆盖全局 base_url
-      method: POST
-      url: /api/order/save
-      body_from_excel: true
-      extract:
-        order_id: $.data.id
-      validate:
-        - eq: [$.code, 0]
-
-    # Step 2: 调用 B 系统查询详情
-    - name: B系统查询订单详情
-      base_url: https://api-b.example.com     # 不同的系统地址
-      method: GET
-      url: /api/order/detail/${order_id}
-      validate_from_excel:
-        prefix: $.data
-      validate:
-        - eq: [$.code, 0]
-```
-
-`base_url` 也支持变量引用，可以在环境配置中统一管理多个系统地址：
-
-```yaml
-# config/test.yaml
-global_variables:
-  system_a_url: https://api-a.test.com
-  system_b_url: https://api-b.test.com
-```
-
-```yaml
-# 用例中引用
 steps:
   - name: A系统保存
     base_url: ${system_a_url}
-    ...
-  - name: B系统查询
+    method: POST
+    url: /api/save
+    body_from_yaml: true
+
+  - name: B系统查详情
     base_url: ${system_b_url}
-    ...
+    method: GET
+    url: /api/detail/${id}
+    validate_from_yaml:
+      userInfo.name: $.data.userName
 ```
 
-> **注意：** `base_url` 不仅在 Excel 驱动用例的 step 中可用，**普通用例也支持**。任何用例都可以通过 `base_url` 字段覆盖全局地址。
+> `base_url` 对普通用例和数据驱动 step 都适用。不写则用全局配置。
+
+### 5.7 注意事项
+
+- `yaml_source` 路径相对于 YAML 文件所在目录（也支持绝对路径）
+- 数据文件放在 `data/` 子目录下，框架自动跳过 `data/` 目录不当用例收集
+- 普通用例和数据驱动用例可混合在同一 YAML 文件中
+- 任一 step 失败则整体失败，后续 step 不执行
+- 手写 `validate` 保留，`validate_from_yaml` 生成的断言追加在后面
+- 支持 `--level` 优先级过滤
 
 ---
 

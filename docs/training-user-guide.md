@@ -68,13 +68,12 @@ autotest/
 │   │   └── login.yaml
 │   └── user/
 │       ├── user_crud.yaml
-│       ├── user_excel_driven.yaml    # Excel 驱动用例示例
+│       ├── user_save_detail.yaml     # YAML 数据驱动用例示例
 │       └── data/
-│           ├── user_data.xlsx        # Excel 数据
-│           └── user_data_with_mapping.xlsx
+│           └── user_datasets.yaml    # 数据驱动测试数据
 ├── hooks/           # Hook 扩展（按需编写）
 ├── common/          # 框架核心（无需修改）
-├── tests/           # 框架单元测试（158个）
+├── tests/           # 框架单元测试（154个）
 ├── reports/         # 报告输出（自动生成）
 ├── logs/            # 日志输出（自动生成）
 ├── run.py           # 运行入口
@@ -579,108 +578,106 @@ def decrypt_response(response):
 
 ---
 
-## 十一、Excel 驱动用例
+## 十一、YAML 数据驱动用例（保存+详情对比）
 
 ### 1. 适用场景
 
-- 保存接口有 **20+ 字段**，逐一填写 body 太繁琐
-- 详情接口需要**逐字段比对**是否与保存一致
-- 同一接口需要**多组数据**测试
+- 保存接口字段多（20+）、层层嵌套
+- 详情接口需要**逐字段比对**，且入参和反参**字段名不同**
+- 多组测试数据，不同数据组字段可以不同
 
 ### 2. 工作原理
 
 ```
-YAML 定义步骤               Excel 存储数据
-┌──────────────┐          ┌──────────────────┐
-│ step1: 保存   │          │ 张三 | 25 | 138.. │
-│ step2: 详情   │    ×     │ 李四 | 30 | 139.. │
-└──────────────┘          └──────────────────┘
+数据文件（YAML，支持嵌套）          用例文件（映射定义一次）
+┌─────────────────────┐          ┌──────────────────────────┐
+│ - label: 张三        │          │ steps:                    │
+│   userInfo:          │          │   - body_from_yaml: true  │
+│     name: 张三       │    ×     │   - validate_from_yaml:   │
+│     age: 25          │          │       userInfo.name:      │
+│ - label: 李四        │          │         $.data.userName   │
+│   userInfo:          │          └──────────────────────────┘
+│     name: 李四       │
+└─────────────────────┘
         ↓
-  自动生成 2 个独立用例：
-  ├── 保存并验证[张三] → step1(body=张三) → step2(断言=张三)
-  └── 保存并验证[李四] → step1(body=李四) → step2(断言=李四)
+  创建用户并验证详情[张三]  → save(body=张三嵌套数据) → detail(按映射断言)
+  创建用户并验证详情[李四]  → save(body=李四嵌套数据) → detail(按映射断言)
 ```
 
-### 3. Excel 文件规范
+### 3. 数据文件
 
-| name | age | phone | tags | address |
-|------|-----|-------|------|---------|
-| 张三 | 25 | 138xxx | ["vip","new"] | {"city":"北京"} |
-| 李四 | 30 | 139xxx | ["normal"] | {"city":"上海"} |
-
-- 第一行 = 表头（列名）
-- 简单值直接填写，复杂值写 JSON 字符串
-- 整数自动转为 int（不会出现 25.0）
-- 空行自动跳过
-
-### 4. YAML 结构
+放在 `testcases/模块/data/` 下，YAML 列表格式：
 
 ```yaml
-testcases:
-  - name: 保存并验证用户
-    level: P0
-    excel_source: data/user_data.xlsx      # 相对于 YAML 文件
-    steps:
-      - name: 保存
-        method: POST
-        url: /api/user/save
-        headers:
-          Authorization: Bearer ${token}
-        body_from_excel: true              # Excel 数据作为 body
-        extract:
-          id: $.data.id
-        validate:
-          - eq: [$.code, 0]
+# testcases/user/data/user_datasets.yaml
+- label: 张三-完整信息
+  userInfo:
+    name: 张三
+    age: 25
+    contacts:
+      - type: phone
+        value: "138xxx"
+  tags: [vip, new]
+  status: 1
 
-      - name: 查看详情
-        method: GET
-        url: /api/user/detail/${id}
-        headers:
-          Authorization: Bearer ${token}
-        validate_from_excel:               # Excel 数据作为断言
-          prefix: $.data
-        validate:
-          - eq: [$.code, 0]
+- label: 李四-只有手机号
+  userInfo:
+    name: 李四
+    age: 30
+    contacts:
+      - type: phone
+        value: "139xxx"
+  tags: [normal]
+  status: 1
+  remark: "VIP转介绍"       # 李四多了 remark，张三没有 → 自动适应
 ```
 
-### 5. body_from_excel 用法
-
-| 写法 | 含义 |
-|------|------|
-| `body_from_excel: true` | Excel 列名直接作为字段名 |
-| `body_from_excel:` + `field_mapping:` | Excel 列名映射到接口字段名 |
-
-**映射示例**（Excel 中文列名 → 接口英文字段名）：
+### 4. 用例文件
 
 ```yaml
-body_from_excel:
-  field_mapping:
-    姓名: name
-    年龄: age
-    手机号: phone
+- name: 创建用户并验证详情
+  yaml_source: data/user_datasets.yaml
+  steps:
+    - name: 保存
+      method: POST
+      url: /api/user/save
+      headers: {Authorization: Bearer ${token}}
+      body_from_yaml: true           # dataset 去掉 label 作为 body
+      extract: {id: $.data.id}
+      validate: [{eq: [$.code, 0]}]
+
+    - name: 验证详情
+      method: GET
+      url: /api/user/detail/${id}
+      headers: {Authorization: Bearer ${token}}
+      validate_from_yaml:            # 路径映射（入参路径 → 反参路径）
+        userInfo.name: $.data.basicInfo.userName
+        userInfo.age: $.data.basicInfo.userAge
+        userInfo.contacts[].type: $.data.contactList[].contactType
+        userInfo.contacts[].value: $.data.contactList[].contactValue
+        tags[]: $.data.tagNames[]
+        status: $.data.userStatus
+        remark: $.data.remark
+      validate: [{eq: [$.code, 0]}]
 ```
 
-### 6. validate_from_excel 用法
+### 5. 映射语法
 
-| 配置 | 含义 |
+| 语法 | 含义 |
 |------|------|
-| `prefix: $.data` | 响应 JSON 的前缀路径 |
-| `field_mapping:` | Excel 列名 → 响应字段名映射 |
+| `status` | 顶层字段 |
+| `userInfo.name` | 嵌套取值 |
+| `tags[]` | 数组每个元素 |
+| `contacts[].type` | 数组内每个元素的字段 |
 
-**递归展开规则**：
+路径不存在时自动跳过（不报错）。
 
-| Excel 值 | 生成的断言 |
-|----------|-----------|
-| `name="张三"` | `eq: [$.data.name, "张三"]` |
-| `tags=["vip","new"]` | `eq: [$.data.tags[0], "vip"]` + `eq: [$.data.tags[1], "new"]` |
-| `address={"city":"北京"}` | `eq: [$.data.address.city, "北京"]` |
+### 6. 注意事项
 
-### 7. 注意事项
-
-- 普通用例和 Excel 驱动用例可混合在同一 YAML 中
+- 数据文件放在 `data/` 子目录，框架自动跳过不当用例收集
+- 普通用例和数据驱动用例可混合在同一 YAML 中
 - 任一 step 失败则整体失败，后续 step 不执行
-- 手写 validate 保留，Excel 断言追加在后面
-- 支持 `--level` 过滤
+- 支持 `--level` 过滤和 `base_url` 跨系统覆盖
 
 ---
 
@@ -965,7 +962,7 @@ python run.py --env $ENV --path testcases/ --report allure
 | `Unresolved variable: ${xxx}` | 变量名拼写错误，或上游用例失败 |
 | `Database connection failed` | 不需要数据库功能则删掉 `database:` 配置 |
 | Excel 数字变成 25.0 | 框架已自动处理，整数会转为 int |
-| Excel 文件不存在 | 检查 `excel_source` 路径（相对于 YAML 文件） |
+| YAML 数据文件不存在 | 检查 `yaml_source` 路径（相对于 YAML 文件），确认 data/ 目录存在 |
 | 如何跳过某些用例 | 用 `--path` 指定目录/文件，或 `--level` 过滤 |
 | 如何上传文件 | 通过 Hook 扩展实现 multipart/form-data |
 | 用例执行顺序 | 同文件按 YAML 顺序，不同文件按路径字母序 |

@@ -1,0 +1,57 @@
+# YAML 数据驱动示例：保存接口 → 详情接口逐字段对比
+#
+# 场景：入参和反参字段名不同、结构层层嵌套
+#   保存 body: {userInfo: {name, age, contacts: [{type, value}]}, tags: [...], status}
+#   详情响应: {data: {basicInfo: {userName, userAge}, contactList: [{contactType, contactValue}], tagNames: [...], userStatus}}
+#
+# 数据存储在 data/user_datasets.yaml 中，每组数据是一个完整的 body 结构。
+# 映射只定义一次，所有数据组共用。
+
+module: 用户管理-数据驱动
+testcases:
+  - name: 登录获取token
+    level: P0
+    method: POST
+    url: /api/login
+    body:
+      username: ${admin_user}
+      password: ${admin_pass}
+    extract:
+      token:
+        jsonpath: $.data.token
+        scope: global
+    validate:
+      - eq: [$.code, 0]
+
+  - name: 创建用户并验证详情
+    level: P0
+    yaml_source: data/user_datasets.yaml       # 数据文件（相对路径）
+    steps:
+      - name: 保存用户
+        method: POST
+        url: /api/user/save
+        headers:
+          Authorization: Bearer ${token}
+        body_from_yaml: true                   # dataset 去掉 label 后作为 body
+        extract:
+          id: $.data.id
+        validate:
+          - eq: [$.code, 0]
+
+      - name: 验证用户详情
+        method: GET
+        url: /api/user/detail/${id}
+        headers:
+          Authorization: Bearer ${token}
+        validate_from_yaml:
+          # 左边 = 数据文件中的字段路径（入参路径）
+          # 右边 = 详情响应中的 JSONPath（反参路径）
+          userInfo.name: $.data.basicInfo.userName
+          userInfo.age: $.data.basicInfo.userAge
+          userInfo.contacts[].type: $.data.contactList[].contactType
+          userInfo.contacts[].value: $.data.contactList[].contactValue
+          tags[]: $.data.tagNames[]
+          status: $.data.userStatus
+          remark: $.data.remark
+        validate:
+          - eq: [$.code, 0]

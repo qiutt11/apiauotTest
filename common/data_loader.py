@@ -101,61 +101,34 @@ def _load_excel(file_path: str) -> dict:
         wb.close()  # 确保文件句柄释放（即使解析出错）
 
 
-def load_excel_rows(file_path: str) -> list[dict]:
-    """读取 Excel 每行数据为字典列表（表头作为 key）。
+def load_yaml_datasets(file_path: str) -> list[dict]:
+    """加载 YAML 数据驱动文件，返回数据集列表。
 
-    用于 Excel 驱动的数据参数化场景，每行对应一组测试数据。
+    YAML 文件应是一个列表，每项是一组测试数据（嵌套 dict）。
+    每组数据建议包含 label 字段用于在报告中标识。
 
-    规则：
-        - 第一行为表头（字段名）
-        - 每行一组数据，跳过空行
-        - 单元格值尝试 JSON 解析：能解析为 dict/list 的自动转换，否则保留原值
-        - 这样支持复杂结构：数组字段填 ["vip","new"]，嵌套对象填 {"city":"北京"}
+    示例文件内容：
+        - label: 张三
+          userInfo:
+            name: 张三
+            age: 25
+          tags: ["vip"]
+        - label: 李四
+          userInfo:
+            name: 李四
+            age: 30
 
     Args:
-        file_path: Excel 文件路径（.xlsx）
+        file_path: YAML 数据文件路径
 
     Returns:
-        字典列表，每个字典代表一行数据 {列名: 值}
+        数据集列表，每项是一个嵌套 dict
     """
-    wb = load_workbook(file_path, read_only=True)
-    try:
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
-        if len(rows) < 2:
-            return []
-
-        headers = [str(h).strip() if h is not None else "" for h in rows[0]]
-        result = []
-
-        for row in rows[1:]:
-            record = {}
-            all_empty = True
-            for i, header in enumerate(headers):
-                if not header:
-                    continue
-                value = row[i] if i < len(row) else None
-                if value is None or (isinstance(value, str) and value.strip() == ""):
-                    continue
-                all_empty = False
-                # openpyxl 将整数单元格返回为 float（如 25 → 25.0），转回 int
-                if isinstance(value, float) and value == int(value):
-                    value = int(value)
-                # 尝试 JSON 解析：dict/list 自动转换，其他保留原值
-                if isinstance(value, str):
-                    try:
-                        parsed = json.loads(value)
-                        if isinstance(parsed, (dict, list)):
-                            value = parsed
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                record[header] = value
-            if not all_empty:
-                result.append(record)
-
-        return result
-    finally:
-        wb.close()
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, list):
+        return []
+    return data
 
 
 def scan_testcase_files(directory: str) -> list[str]:
