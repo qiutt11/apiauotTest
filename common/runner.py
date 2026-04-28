@@ -116,6 +116,7 @@ def run_testcase(
                     "name": name,
                     "passed": False,
                     "response": {"status_code": None, "body": None, "headers": None, "elapsed_ms": 0, "error": None},
+                    "request": {"method": method, "url": url, "headers": headers, "body": body},
                     "extracts": {},
                     "db_vars": {},
                     "validations": [],
@@ -137,6 +138,7 @@ def run_testcase(
                     "name": name,
                     "passed": False,
                     "response": {"status_code": None, "body": None, "headers": None, "elapsed_ms": 0, "error": None},
+                    "request": {"method": method, "url": url, "headers": headers, "body": body},
                     "extracts": {},
                     "db_vars": {},
                     "validations": [],
@@ -204,6 +206,7 @@ def _execute_with_retry(
         if response["error"]:
             last_result = {
                 "name": name, "passed": False, "response": response,
+                "request": {"method": method, "url": url, "headers": headers, "body": body},
                 "extracts": {}, "db_vars": {}, "validations": [],
                 "error": response["error"],
             }
@@ -246,11 +249,14 @@ def _execute_with_retry(
         all_passed = True
         if case.get("validate"):
             extra_vars = {**extracts, **db_vars}
-            validations = validate_case(response, case["validate"], extra_vars=extra_vars)
+            # 先用变量池解析 validate 中的 ${xxx}（如引用前面用例 extract 的变量）
+            resolved_validate = pool.resolve(case["validate"])
+            validations = validate_case(response, resolved_validate, extra_vars=extra_vars)
             all_passed = all(v["passed"] for v in validations)
 
         last_result = {
             "name": name, "passed": all_passed, "response": response,
+            "request": {"method": method, "url": url, "headers": headers, "body": body},
             "extracts": extracts, "db_vars": db_vars, "validations": validations,
             "error": None,
         }

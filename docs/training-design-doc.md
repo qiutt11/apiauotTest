@@ -133,7 +133,8 @@ run_testcase()
 │  │  │  8. after hook（如有）→ 修改 response           │  │  │
 │  │  │  9. extract → pool.set_module()                │  │  │
 │  │  │  10. db_extract（如有）→ pool.set_module()      │  │  │
-│  │  │  11. validate → 断言校验                        │  │  │
+│  │  │  11. pool.resolve(validate) → 断言中 ${} 替换   │  │  │
+│  │  │  12. validate → 断言校验                        │  │  │
 │  │  │  → 全部通过？返回 passed                        │  │  │
 │  │  │  → 失败 + 还有重试？wait → 继续循环              │  │  │
 │  │  │  → 失败 + 重试耗尽？返回 failed                 │  │  │
@@ -143,8 +144,9 @@ run_testcase()
 │  │  12. db_teardown（如有）→ 即使失败也执行              │  │
 │  └──────────────────────────────────────────────────────┘  │
 │                                                            │
-│  返回：{name, passed, response, extracts, db_vars,         │
-│         validations, error}                                │
+│  返回：{name, passed, response, request,                    │
+│         extracts, db_vars, validations, error}             │
+│  （request 含替换后的 method/url/headers/body，用于日志）     │
 └────────────────────────────────────────────────────────────┘
 ```
 

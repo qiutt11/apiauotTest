@@ -2,6 +2,10 @@ base_url: https://test-api.example.com
 global_headers:
   Content-Type: application/json
 global_variables:
+  HMC_admin: "houhx02"
+  HMC_password: "J1In8xZ70LyJXNtmA2/CpsZJhDfmCKdmi9as3kwbE04="
+  encryptStr: "$2a$10$ziveTBbukxoZMd5i2RbY.erIFi33Zm4Fxn51CPr7TIqe8Ue8NIvsi"
+  resultCode: "0000"
   admin_user: admin
   admin_pass: "123456"
 

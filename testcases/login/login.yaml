@@ -1,31 +1,50 @@
 module: 用户登录
 testcases:
-  - name: 登录成功
-    description: 使用正确账号密码登录
+  - name: HMC-获取验证码图片
+    description: 获取验证码图片
     level: P0
     method: POST
-    url: /api/login
+    url: /tms-api/imgVerCode/getLoginImageCode
+    headers:
+      Content-Type: application/json
+    body: {}
+    extract:
+      codeNum: $.map.imgCodeVO.codeNum
+    validate:
+      - eq: [$.resultCode, "${resultCode}"]
+      - not_null: [$.map.imgCodeVO.codeNum]
+
+  - name: HMC-获取图形验证码
+    description: 获取图形验证码
+    level: P1
+    method: POST
+    url: /tms-api/verifyCode/get
+    body:
+      codeNum: ${codeNum}
+      encryptStr: ${encryptStr}
+      test: ''
+    extract:
+      storedCode: $.map.storedCode
+    validate:
+      - eq: [$.resultCode, "0000"]
+      - not_null: [$.map.storedCode]
+
+  - name: HMC-登录
+    description: 登录并获取token
+    level: P0
+    method: POST
+    url: /tms-api/user/loginForOA
     headers:
       Content-Type: application/json
     body:
-      username: ${admin_user}
-      password: ${admin_pass}
+      username: ${HMC_admin}
+      password: ${HMC_password}
+      verCode: ${storedCode}
+      codeNum: ${codeNum}
     extract:
-      token: $.data.token
+      HMC_token:
+        jsonpath: $.map.tmsToken
+        scope: global
     validate:
-      - eq: [status_code, 200]
-      - eq: [$.code, 0]
-      - not_null: [$.data.token]
-
-  - name: 密码错误
-    description: 密码输入错误应返回错误码
-    level: P1
-    method: POST
-    url: /api/login
-    body:
-      username: ${admin_user}
-      password: wrong_password
-    validate:
-      - eq: [status_code, 200]
-      - eq: [$.code, 1001]
-      - contains: [$.msg, "密码"]
+      - eq: [$.resultCode, "0000"]
+      - not_null: [$.map.tmsToken]

@@ -286,20 +286,23 @@ testcases:
 
 ### 3. 用例执行流程
 
-每个用例内部的执行顺序（10 步）：
+每个用例内部的执行顺序：
 
 ```
-1. 解析变量 ${xxx}
+1. 解析变量 ${xxx}（url、headers、body）
 2. 执行 db_setup（如有，支持 extract 提取变量）
 3. 用 db_setup 提取的变量重新解析请求参数
 4. 执行 before hook（如有）
 5. 发送 HTTP 请求
 6. 执行 after hook（如有）
-7. 从响应中 extract 提取变量
+7. 从响应中 extract 提取变量（支持 scope: global）
 8. 执行 db_extract 数据库查询（如有）
-9. 执行 validate 断言校验
-10. 执行 db_teardown 清理（如有，即使前面失败也执行）
+9. 解析 validate 中的 ${xxx} 变量
+10. 执行 validate 断言校验
+11. 执行 db_teardown 清理（如有，即使前面失败也执行）
 ```
+
+> 日志和报告中显示的 URL、body 等是**替换变量后的实际值**，方便排查问题。
 
 ### 4. 变量作用域
 

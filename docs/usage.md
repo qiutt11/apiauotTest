@@ -225,16 +225,18 @@ testcases:
 同一个 YAML 文件中的用例**按从上到下的顺序**执行。每个用例的内部执行流程：
 
 ```
-1. 解析变量 ${xxx}
-2. 执行 db_setup（如有）
-3. 执行 before hook（如有）
-4. 发送 HTTP 请求
-5. 执行 after hook（如有）
-6. 从响应中 extract 提取变量
-7. 执行 db_extract 数据库查询（如有）
-8. 执行 validate 断言校验
-9. 执行 db_teardown 清理（如有，即使前面步骤失败也会执行）
-10. 记录日志
+1. 解析变量 ${xxx}（url、headers、body）
+2. 执行 db_setup（如有，支持 extract 提取变量）
+3. 用 db_setup 提取的变量重新解析请求参数
+4. 执行 before hook（如有）
+5. 发送 HTTP 请求
+6. 执行 after hook（如有）
+7. 从响应中 extract 提取变量（支持 scope: global 跨文件共享）
+8. 执行 db_extract 数据库查询（如有）
+9. 解析 validate 中的 ${xxx} 变量
+10. 执行 validate 断言校验
+11. 执行 db_teardown 清理（如有，即使前面步骤失败也会执行）
+12. 记录日志（显示替换后的实际 URL、body 等）
 ```
 
 ### 3.4 变量作用域

@@ -231,15 +231,16 @@ class TestCaseItem(pytest.Item):
             default_retry=cfg.get("retry", 0),
         )
 
-        # 记录完整的请求/响应日志
+        # 记录完整的请求/响应日志（使用替换变量后的实际请求数据）
+        req = result.get("request", {})
         log_request(
             logger=logger,
             module=module_name,
             name=self._case.get("name", ""),
-            method=self._case.get("method", ""),
-            url=cfg["base_url"] + self._case.get("url", ""),
-            headers=self._case.get("headers"),
-            body=self._case.get("body"),
+            method=req.get("method", ""),
+            url=req.get("url", ""),
+            headers=req.get("headers"),
+            body=req.get("body"),
             status_code=result["response"]["status_code"] if result["response"] else None,
             elapsed_ms=result["response"]["elapsed_ms"] if result["response"] else 0,
             response=result["response"]["body"] if result["response"] else None,
@@ -473,15 +474,16 @@ class DataDrivenItem(pytest.Item):
                 default_retry=cfg.get("retry", 0),
             )
 
-            # 记录日志
+            # 记录日志（使用替换变量后的实际请求数据）
+            req = result.get("request", {})
             log_request(
                 logger=logger,
                 module=self._module_name,
                 name=step_name,
-                method=step_case.get("method", ""),
-                url=cfg["base_url"] + step_case.get("url", ""),
-                headers=step_case.get("headers"),
-                body=step_case.get("body"),
+                method=req.get("method", ""),
+                url=req.get("url", ""),
+                headers=req.get("headers"),
+                body=req.get("body"),
                 status_code=result["response"]["status_code"] if result["response"] else None,
                 elapsed_ms=result["response"]["elapsed_ms"] if result["response"] else 0,
                 response=result["response"]["body"] if result["response"] else None,
