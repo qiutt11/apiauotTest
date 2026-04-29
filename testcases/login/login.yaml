@@ -26,7 +26,7 @@ testcases:
     extract:
       storedCode: $.map.storedCode
     validate:
-      - eq: [$.resultCode, "0000"]
+      - eq: [$.resultCode, "${resultCode}"]
       - not_null: [$.map.storedCode]
 
   - name: HMC-登录
@@ -46,5 +46,5 @@ testcases:
         jsonpath: $.map.tmsToken
         scope: global
     validate:
-      - eq: [$.resultCode, "0000"]
+      - eq: [$.resultCode, "${resultCode}"]
       - not_null: [$.map.tmsToken]

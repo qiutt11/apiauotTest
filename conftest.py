@@ -502,8 +502,10 @@ class DataDrivenItem(pytest.Item):
                 for v in result.get("validations", []):
                     if not v["passed"]:
                         failures.append(
-                            f"[{step_name}] {v['keyword']}: {v.get('expression', '')} "
-                            f"actual={v.get('actual')} expect={v.get('expect', '')}"
+                            f"[{step_name}] 断言失败 ✘ 字段: {v.get('expression', '')} | "
+                            f"断言: {v['keyword']} | "
+                            f"实际值: {v.get('actual')} | "
+                            f"预期值: {v.get('expect', '')}"
                         )
                 raise TestCaseFailure("\n".join(failures))
 

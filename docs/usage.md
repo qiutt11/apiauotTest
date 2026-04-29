@@ -1078,7 +1078,7 @@ email:
 耗时：32s
 
 失败用例：
-  1. 用户管理 > 删除用户 - eq: $.code actual=500 expect=0
+  1. 用户管理 > 删除用户 - 断言失败 ✘ 字段: $.code | 断言: eq | 实际值: 500 | 预期值: 0
   2. 订单模块 > 创建订单 - Request error: Timeout
 ```
 
