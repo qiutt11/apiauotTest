@@ -259,3 +259,61 @@ def test_maybe_send_feishu_only(mock_feishu):
                             report_path=None, feishu_config=feishu_config)
 
     mock_feishu.assert_called_once()
+
+
+@patch("common.notifier.http_requests.post")
+def test_send_feishu_with_report_url(mock_post):
+    """Card should contain report button when report_url is configured."""
+    from common.notifier import send_feishu
+
+    mock_post.return_value = MagicMock(
+        json=MagicMock(return_value={"code": 0})
+    )
+
+    feishu_config = {
+        "enabled": True,
+        "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
+        "report_url": "http://192.168.1.100:9090/reports/report.html",
+    }
+    stats = {
+        "total": 5, "passed": 5, "failed": 0, "skipped": 0,
+        "pass_rate": "100%", "duration": "5s", "env": "test", "failures": [],
+    }
+
+    send_feishu(feishu_config, stats)
+
+    payload = mock_post.call_args[1]["json"]
+    elements = payload["card"]["elements"]
+    # Should have an action element with button
+    action_elements = [e for e in elements if e.get("tag") == "action"]
+    assert len(action_elements) == 1
+    button = action_elements[0]["actions"][0]
+    assert button["url"] == "http://192.168.1.100:9090/reports/report.html"
+    assert button["tag"] == "button"
+
+
+@patch("common.notifier.http_requests.post")
+def test_send_feishu_without_report_url(mock_post):
+    """Card should NOT contain report button when report_url is empty."""
+    from common.notifier import send_feishu
+
+    mock_post.return_value = MagicMock(
+        json=MagicMock(return_value={"code": 0})
+    )
+
+    feishu_config = {
+        "enabled": True,
+        "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
+        "report_url": "",
+    }
+    stats = {
+        "total": 5, "passed": 5, "failed": 0, "skipped": 0,
+        "pass_rate": "100%", "duration": "5s", "env": "test", "failures": [],
+    }
+
+    send_feishu(feishu_config, stats)
+
+    payload = mock_post.call_args[1]["json"]
+    elements = payload["card"]["elements"]
+    action_elements = [e for e in elements if e.get("tag") == "action"]
+    assert len(action_elements) == 0
