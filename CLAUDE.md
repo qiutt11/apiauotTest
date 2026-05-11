@@ -33,8 +33,10 @@ common/              # Core framework modules (DO NOT modify for normal use)
   hook_manager.py    # Dynamic loading of user-defined hook functions (__module__ filtered)
   runner.py          # Core execution engine orchestrating all modules
   logger.py          # Loguru-based logging
-  notifier.py        # Email + Feishu webhook notification
+  notifier.py        # Email + Feishu webhook notification (with report_url button)
 config/              # Environment configs (config.yaml + per-env files)
+scripts/
+  feishu_bot.py      # Feishu bot service: receive commands + host HTML reports (Flask)
 testcases/           # Test case data files (YAML/JSON/Excel)
 hooks/               # User-defined hook functions
 tests/               # 154 tests (128 unit + 21 integration + 5 level filter)
@@ -67,7 +69,8 @@ python3 -m coverage report --show-missing
 - **Execution flow per test case**: resolve vars (including case-level `base_url`) → db_setup (with extract) → re-resolve vars → before hook → (request → after hook → extract → db_extract → resolve validate ${xxx} → validate) with retry → db_teardown → log (with resolved request data).
 - **pytest integration**: Custom `pytest_collect_file` discovers YAML/JSON/Excel files under `testcases/` (skips `data/` subdirectories). Each test case becomes a `TestCaseItem`. YAML data-driven cases (with `yaml_source` + `steps`) become `DataDrivenItem` (one per dataset). `--level` filters at collection time. `--workers` uses xdist `loadfile` distribution.
 - **YAML data-driven testing**: YAML testcase with `yaml_source` + `steps` triggers data-driven mode. Data file stores nested body structures. `body_from_yaml` sends dataset as request body. `validate_from_yaml` uses path mapping (data_path → response_jsonpath) to auto-generate assertions. Supports nested objects, arrays with `[]` wildcard, and missing field auto-skip. Each dataset generates an independent test item.
-- **Notifications**: Email (SMTP_SSL) and Feishu (webhook card with color-coded header and @mentions).
+- **Notifications**: Email (SMTP_SSL) and Feishu (webhook card with color-coded header, @mentions, and optional report_url button).
+- **Feishu bot service** (`scripts/feishu_bot.py`): Flask app that receives Feishu commands (`/run`, `/status`) to trigger tests, and serves `reports/` directory for online HTML report access.
 
 ## Conventions
 

@@ -1104,10 +1104,13 @@ feishu:
   enabled: true
   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/你的token"
   send_on: fail           # always=每次 / fail=仅失败时 / never=不发送
+  report_url: "http://服务器IP:9090/reports/report.html"  # 报告地址（通知中显示"查看报告"按钮）
   at_user_ids:            # 失败时 @ 指定用户（可选）
     - "ou_xxxx"           # 飞书用户的 open_id
     - "ou_yyyy"
 ```
+
+配置 `report_url` 后，飞书通知卡片底部会出现"查看报告"按钮，点击直接跳转到在线报告页面。
 
 ### 18.3 通知效果
 
@@ -1147,6 +1150,48 @@ feishu:
 
 飞书管理后台 → 组织架构 → 点击用户 → 复制 open_id（格式：`ou_xxx`）。
 也可以通过飞书开放平台 API 获取。
+
+### 18.6 飞书机器人触发测试
+
+除了测试完成后被动通知，还可以在飞书群里发指令主动触发测试执行。
+
+**启动服务：**
+
+```bash
+# 设置环境变量
+export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/你的token"
+export REPORT_BASE_URL="http://你的服务器IP:9090"
+
+# 启动飞书机器人服务
+python scripts/feishu_bot.py
+```
+
+服务启动后提供两个功能：
+
+1. **接收飞书指令** — `http://服务器IP:9090/feishu/event`（配置为飞书事件回调地址）
+2. **托管测试报告** — `http://服务器IP:9090/reports/report.html`（其他电脑可直接访问）
+
+**飞书群内支持的指令：**
+
+| 指令 | 说明 |
+|------|------|
+| `/run` | 运行全部用例（默认环境） |
+| `/run --env dev` | 指定环境 |
+| `/run --env test --level P0` | 指定环境和优先级 |
+| `/run --env test --level P0,P1 --workers 4` | 并行执行 |
+| `/status` | 查看当前执行状态 |
+
+测试完成后自动推送结果到群里，附带报告链接。
+
+**飞书开放平台配置步骤：**
+
+1. 进入[飞书开放平台](https://open.feishu.cn/app)，创建企业自建应用
+2. 添加"机器人"能力
+3. 事件订阅 → 请求地址填 `http://服务器IP:9090/feishu/event`
+4. 添加事件：`接收消息 (im.message.receive_v1)`
+5. 在飞书群中添加该应用机器人
+
+> 如果只需要被动通知（不需要群内触发），使用自定义机器人 Webhook 即可，无需创建应用。
 
 ---
 

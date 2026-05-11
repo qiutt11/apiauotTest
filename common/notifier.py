@@ -189,6 +189,22 @@ def send_feishu(feishu_config: dict, stats: dict):
             "text": {"tag": "lark_md", "content": f"**失败用例：**\n{failure_lines}"},
         })
 
+    # 添加报告链接按钮
+    report_url = feishu_config.get("report_url", "")
+    if report_url:
+        card["card"]["elements"].append({"tag": "hr"})
+        card["card"]["elements"].append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "📊 查看测试报告"},
+                    "type": "primary",
+                    "url": report_url,
+                }
+            ],
+        })
+
     # 失败时 @指定用户
     at_user_ids = feishu_config.get("at_user_ids", [])
     if at_user_ids and failed > 0:

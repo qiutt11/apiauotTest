@@ -19,5 +19,8 @@ feishu:
   webhook_url: ""
   # 发送时机：always=每次 / fail=仅失败时 / never=不发送
   send_on: fail
+  # 测试报告地址（可选，填写后飞书通知会附带"查看报告"按钮）
+  # 示例：http://192.168.1.100:8080/report.html 或 https://oss.xxx.com/reports/report.html
+  report_url: ""
   # 失败时 @ 指定用户（可选，填飞书 user_id）
   at_user_ids: []
