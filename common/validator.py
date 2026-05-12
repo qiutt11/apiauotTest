@@ -1,7 +1,8 @@
 """断言校验模块。
 
-提供 10 个断言关键字，用于验证 API 响应是否符合预期：
-    eq / neq / gt / lt / gte / lte / contains / not_null / type / length
+提供 15 个断言关键字，用于验证 API 响应是否符合预期：
+    eq / neq / gt / lt / gte / lte / contains / not_null / is_null / type / length
+    not_empty / is_empty / regex
 
 支持的表达式类型：
     - "status_code"    → HTTP 状态码
@@ -14,8 +15,17 @@
       - eq: [status_code, 200]
       - eq: [$.code, 0]
       - not_null: [$.data.token]
+      - is_null: [$.data.deletedAt]
+      - not_empty: [$.data.list]
+      - is_empty: [$.data.errors]
       - gt: [$.data.total, 0]
       - type: [$.data.id, int]
+      - regex: [$.data.email, email]
+      - regex: [$.data.phone, phone]
+      - regex: [$.data.id, uuid]
+      - regex: [$.data.url, url]
+      - regex: [$.data.date, date]
+      - regex: [$.data.custom, "^[A-Z]{3}-\\d{4}$"]
 """
 
 import re
@@ -31,6 +41,22 @@ TYPE_MAP = {
     "list": list,
     "dict": dict,
     "bool": bool,
+}
+
+# regex 关键字内置正则模式（常用场景，直接用别名即可）
+# 用法：- regex: [$.data.email, email]
+# 也支持自定义正则：- regex: [$.data.field, "^[A-Z]{3}-\\d{4}$"]
+REGEX_PATTERNS = {
+    "email": r"^[\w.+-]+@[\w-]+\.[\w.]+$",
+    "phone": r"^1[3-9]\d{9}$",
+    "id_card": r"^\d{17}[\dXx]$",
+    "url": r"^https?://\S+$",
+    "ip": r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$",
+    "date": r"^\d{4}-\d{2}-\d{2}$",
+    "datetime": r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}",
+    "uuid": r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    "integer": r"^-?\d+$",
+    "number": r"^-?\d+(\.\d+)?$",
 }
 
 
@@ -100,7 +126,7 @@ def _execute_validation(
     """执行单个断言关键字。
 
     Args:
-        keyword: 断言关键字（eq/neq/gt/lt/gte/lte/contains/not_null/type/length）
+        keyword: 断言关键字（eq/neq/gt/lt/gte/lte/contains/not_null/is_null/not_empty/is_empty/regex/type/length）
         args: 参数列表，如 ["$.code", 0] 或 ["$.data.token"]
         response: 标准响应字典
         extra_vars: 额外变量字典（可选）
@@ -117,6 +143,67 @@ def _execute_validation(
                 "keyword": keyword,
                 "expression": args[0],
                 "actual": actual,
+                "passed": passed,
+            }
+
+        # ---------- is_null: 检查值为 None ----------
+        if keyword == "is_null":
+            actual = _get_value(args[0], response, extra_vars)
+            passed = actual is None
+            return {
+                "keyword": keyword,
+                "expression": args[0],
+                "actual": actual,
+                "passed": passed,
+            }
+
+        # ---------- not_empty: 检查值非空（str/list/dict 长度 > 0） ----------
+        if keyword == "not_empty":
+            actual = _get_value(args[0], response, extra_vars)
+            if actual is None:
+                passed = False
+            elif isinstance(actual, (str, list, dict)):
+                passed = len(actual) > 0
+            else:
+                passed = True  # int/bool 等非容器类型视为非空
+            return {
+                "keyword": keyword,
+                "expression": args[0],
+                "actual": actual,
+                "passed": passed,
+            }
+
+        # ---------- is_empty: 检查值为空（None 或 str/list/dict 长度 == 0） ----------
+        if keyword == "is_empty":
+            actual = _get_value(args[0], response, extra_vars)
+            if actual is None:
+                passed = True
+            elif isinstance(actual, (str, list, dict)):
+                passed = len(actual) == 0
+            else:
+                passed = False
+            return {
+                "keyword": keyword,
+                "expression": args[0],
+                "actual": actual,
+                "passed": passed,
+            }
+
+        # ---------- regex: 正则匹配 ----------
+        if keyword == "regex":
+            actual = _get_value(args[0], response, extra_vars)
+            pattern_name = args[1]
+            # 先查内置模式，没有就当自定义正则
+            pattern = REGEX_PATTERNS.get(pattern_name, pattern_name)
+            if actual is None:
+                passed = False
+            else:
+                passed = bool(re.search(pattern, str(actual)))
+            return {
+                "keyword": keyword,
+                "expression": args[0],
+                "actual": actual,
+                "expect": pattern_name,
                 "passed": passed,
             }
 
