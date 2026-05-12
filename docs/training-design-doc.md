@@ -49,7 +49,7 @@
 │  │ 编排 10 步   │  └──────────────┘  └──────────────────┘    │
 │  │ 执行流程    │                                             │
 │  │             │→ extractor.py → JSONPath 提取               │
-│  │             │→ validator.py → 10 个断言关键字              │
+│  │             │→ validator.py → 15 个断言关键字              │
 │  │             │→ db_handler.py → MySQL 操作                 │
 │  │             │→ hook_manager.py → 自定义扩展               │
 │  └─────────────┘                                             │
@@ -241,7 +241,9 @@ get_extract_scope(extract_config, "token") → "global" 或 "module"
 
 ### 3.6 `validator.py` — 断言校验
 
-**10 个关键字**：eq / neq / gt / lt / gte / lte / contains / not_null / type / length
+**15 个关键字**：eq / neq / gt / lt / gte / lte / contains / not_null / is_null / not_empty / is_empty / type / length / regex
+
+> regex 内置 10 种常用模式（email/phone/id_card/url/ip/date/datetime/uuid/integer/number），也支持自定义正则表达式。
 
 **表达式解析优先级**：
 1. `"status_code"` → HTTP 状态码
@@ -560,10 +562,11 @@ maybe_send_notification(email_config, feishu_config, stats, send_on)
 | test_hook_manager.py | 5 | Hook 加载、调用、缺失处理 |
 | test_level_filter.py | 5 | 优先级过滤 |
 | test_logger.py | 2 | 日志创建、格式化 |
-| test_notifier.py | 11 | 邮件、飞书、调度逻辑 |
+| test_notifier.py | 16 | 邮件、飞书、report_url 按钮、调度逻辑 |
+| test_feishu_bot.py | 8 | 飞书机器人服务（首页、指令、验证、状态） |
 | test_request_handler.py | 5 | GET/POST、超时、连接错误 |
 | test_runner.py | 19 | 基础执行、extract、变量、DB、Hook、重试、base_url |
-| test_validator.py | 20 | 10 个断言关键字 + 边界情况 |
+| test_validator.py | 51 | 15 个断言关键字 + regex 内置模式 + 边界情况 |
 | test_variable_pool.py | 16 | 三层优先级、resolve、类型保留 |
 
 ### 集成测试分布
@@ -596,6 +599,7 @@ maybe_send_notification(email_config, feishu_config, stats, send_on)
 | 通知 | 邮件 + 飞书 | 覆盖传统和 IM 两种渠道 |
 | float→int | `25.0 == int(25.0)` 时转换 | openpyxl 默认行为修正 |
 | extract scope | global 存全局池，module 存模块池 | 登录 token 等需跨文件共享，兼容原写法 |
+| depends 依赖 | YAML 声明依赖文件，自动执行+缓存+变量注入 | 每个接口独立文件时避免 global 污染 |
 | 配置合并 | 递归深合并 | 保留未覆盖的嵌套键 |
 
 ---
@@ -612,7 +616,7 @@ maybe_send_notification(email_config, feishu_config, stats, send_on)
 | `runner.py` | 268 | 核心执行引擎（10 步 + 重试 + base_url 覆盖） |
 | `request_handler.py` | 76 | HTTP 请求封装 |
 | `extractor.py` | 54 | JSONPath 提取 |
-| `validator.py` | 186 | 10 个断言关键字 |
+| `validator.py` | 250 | 15 个断言关键字（含 regex 内置模式） |
 | `db_handler.py` | 126 | MySQL 操作（setup/extract/teardown） |
 | `hook_manager.py` | 86 | 动态 Hook 加载 + 安全过滤 |
 | `logger.py` | 99 | loguru 日志（控制台 + 文件） |

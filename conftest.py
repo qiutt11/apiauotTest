@@ -93,6 +93,10 @@ def pytest_configure(config):
     # 跟踪当前测试文件路径（用于文件切换时清理模块变量）
     config._autotest_current_file = None
 
+    # depends 依赖缓存：{文件绝对路径: {变量名: 值}}
+    # 依赖文件只执行一次，后续引用直接从缓存读取变量
+    config._autotest_depends_cache = {}
+
 
 def pytest_unconfigure(config):
     """pytest 退出时清理资源。"""
@@ -141,6 +145,22 @@ class TestCaseFile(pytest.File):
         data = load_testcases(str(self.path))
         module_name = data.get("module", self.path.stem)
 
+        # 解析 depends 声明（相对于 testcases/ 目录）
+        depends_raw = data.get("depends", [])
+        if isinstance(depends_raw, str):
+            depends_raw = [depends_raw]
+        depends_files = []
+        if depends_raw:
+            testcases_dir = self._find_testcases_dir()
+            for dep in depends_raw:
+                abs_path = os.path.join(testcases_dir, dep)
+                if not os.path.exists(abs_path):
+                    raise FileNotFoundError(
+                        f"Dependency file not found: {abs_path} "
+                        f"(referenced by depends in {self.path})"
+                    )
+                depends_files.append(abs_path)
+
         # 解析 --level 过滤参数（如 "P0,P1" → {"blocker", "critical"}）
         level_filter = self.config.getoption("--level", default=None)
         allowed_levels = None
@@ -186,17 +206,29 @@ class TestCaseFile(pytest.File):
                 continue
 
             yield TestCaseItem.from_parent(
-                self, name=name, callobj=case, module_name=module_name
+                self, name=name, callobj=case, module_name=module_name,
+                depends_files=depends_files,
             )
+
+
+    def _find_testcases_dir(self):
+        """向上查找 testcases 目录。"""
+        current = self.path.parent
+        while current != current.parent:
+            if current.name == "testcases":
+                return str(current)
+            current = current.parent
+        return os.path.join(PROJECT_ROOT, "testcases")
 
 
 class TestCaseItem(pytest.Item):
     """单个测试用例的 pytest 执行器。"""
 
-    def __init__(self, name, parent, callobj, module_name=""):
+    def __init__(self, name, parent, callobj, module_name="", depends_files=None):
         super().__init__(name, parent)
         self._case = callobj             # 用例数据字典
         self._module_name = module_name  # 所属模块名（显示在报告中）
+        self._depends_files = depends_files or []
         level = callobj.get("level", "normal")
         # 添加用户属性（用于统计和报告）
         self.user_properties.append(("module", module_name))
@@ -216,6 +248,13 @@ class TestCaseItem(pytest.Item):
         if config._autotest_current_file != current_file:
             pool.clear_module()
             config._autotest_current_file = current_file
+
+            # 解析 depends：执行依赖文件并导入变量
+            if self._depends_files:
+                _resolve_depends(
+                    depends_files=self._depends_files,
+                    config=config,
+                )
 
         module_name = self._module_name
 
@@ -516,6 +555,109 @@ class DataDrivenItem(pytest.Item):
 
     def reportinfo(self):
         return self.path, None, f"{self._module_name} > {self.name}"
+
+
+# ==========================================================================
+# depends 依赖解析
+# ==========================================================================
+def _resolve_depends(depends_files: list[str], config):
+    """按顺序执行依赖文件，将提取的变量注入当前 module scope。
+
+    规则：
+        - 每个依赖文件只执行一次（结果缓存在 config._autotest_depends_cache）
+        - 依赖文件自身也可以有 depends（递归解析）
+        - 提取的变量注入当前文件的 module scope（不污染 global）
+        - 依赖文件执行失败时抛出 TestCaseFailure
+    """
+    cfg = config._autotest_config
+    pool = config._autotest_pool
+    logger = config._autotest_logger
+    hooks = config._autotest_hooks
+    db = config._autotest_db
+    cache = config._autotest_depends_cache
+
+    for dep_path in depends_files:
+        # 已缓存 → 直接注入变量，不重复执行
+        if dep_path in cache:
+            for k, v in cache[dep_path].items():
+                pool.set_module(k, v)
+            continue
+
+        # 加载依赖文件
+        dep_data = load_testcases(dep_path)
+
+        # 递归解析依赖的依赖
+        sub_depends = dep_data.get("depends", [])
+        if isinstance(sub_depends, str):
+            sub_depends = [sub_depends]
+        if sub_depends:
+            testcases_dir = _find_testcases_dir_from_path(dep_path)
+            sub_abs = []
+            for sd in sub_depends:
+                abs_sd = os.path.join(testcases_dir, sd)
+                if os.path.exists(abs_sd):
+                    sub_abs.append(abs_sd)
+            if sub_abs:
+                _resolve_depends(sub_abs, config)
+
+        # 执行依赖文件中的所有用例，收集提取的变量
+        extracted_vars = {}
+        for case in dep_data.get("testcases", []):
+            result = run_testcase(
+                case=case,
+                base_url=cfg["base_url"],
+                pool=pool,
+                timeout=cfg.get("timeout", 30),
+                hook_manager=hooks,
+                db_handler=db,
+                global_headers=cfg.get("global_headers", {}),
+                default_retry=cfg.get("retry", 0),
+            )
+
+            # 记录日志
+            req = result.get("request", {})
+            log_request(
+                logger=logger,
+                module=f"[depends] {dep_data.get('module', '')}",
+                name=case.get("name", ""),
+                method=req.get("method", ""),
+                url=req.get("url", ""),
+                headers=req.get("headers"),
+                body=req.get("body"),
+                status_code=result["response"]["status_code"] if result["response"] else None,
+                elapsed_ms=result["response"]["elapsed_ms"] if result["response"] else 0,
+                response=result["response"]["body"] if result["response"] else None,
+                extracts=result.get("extracts"),
+                validations=[
+                    f"{v['keyword']}: {'PASS' if v['passed'] else 'FAIL'}"
+                    for v in result.get("validations", [])
+                ],
+            )
+
+            if not result["passed"]:
+                raise TestCaseFailure(
+                    f"Dependency failed: {os.path.basename(dep_path)} > "
+                    f"{case.get('name', 'unknown')}: {result.get('error', 'validation failed')}"
+                )
+
+            # 收集提取的变量
+            extracted_vars.update(result.get("extracts", {}))
+
+        # 缓存并注入变量
+        cache[dep_path] = extracted_vars
+        for k, v in extracted_vars.items():
+            pool.set_module(k, v)
+
+
+def _find_testcases_dir_from_path(file_path: str) -> str:
+    """从文件路径向上查找 testcases 目录。"""
+    import pathlib
+    current = pathlib.Path(file_path).parent
+    while current != current.parent:
+        if current.name == "testcases":
+            return str(current)
+        current = current.parent
+    return os.path.join(PROJECT_ROOT, "testcases")
 
 
 class TestCaseFailure(Exception):

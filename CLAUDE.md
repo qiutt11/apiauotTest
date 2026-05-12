@@ -39,7 +39,7 @@ scripts/
   feishu_bot.py      # Feishu bot service: receive commands + host HTML reports (Flask)
 testcases/           # Test case data files (YAML/JSON/Excel)
 hooks/               # User-defined hook functions
-tests/               # 154 tests (128 unit + 21 integration + 5 level filter)
+tests/               # 175 tests (149 unit + 21 integration + 5 level filter)
 conftest.py          # pytest integration: auto-discovery, execution, stats, allure, level filter, DataDrivenItem
 run.py               # CLI entry point (--env, --path, --report, --level, --workers)
 ```
@@ -65,10 +65,12 @@ python3 -m coverage report --show-missing
 ## Key Architecture Decisions
 
 - **Data-driven**: Test cases are pure data files. The framework parses and executes them automatically via `conftest.py` custom collector (`TestCaseFile` / `TestCaseItem`).
-- **Variable pool**: Three-tier priority (temp > module > global). Variables resolved via `${xxx}`. Single `${var}` preserves original type; embedded in string converts to str. Extract supports `scope: global` to store variables in global pool (survives file switches, used for cross-file token sharing).
+- **Variable pool**: Three-tier priority (temp > module > global). Variables resolved via `${xxx}`. Single `${var}` preserves original type; embedded in string converts to str. Extract supports `scope: global` to store variables in global pool (survives file switches, used for cross-file token sharing). `depends` field enables cross-file dependency without global scope pollution.
+- **depends**: YAML files can declare `depends: [login/login.yaml]` to auto-execute dependency files first. Extracted variables are injected into module scope. Dependencies cached (executed once). Supports recursive chains. Resolved in `_resolve_depends()` in conftest.py.
 - **Execution flow per test case**: resolve vars (including case-level `base_url`) → db_setup (with extract) → re-resolve vars → before hook → (request → after hook → extract → db_extract → resolve validate ${xxx} → validate) with retry → db_teardown → log (with resolved request data).
 - **pytest integration**: Custom `pytest_collect_file` discovers YAML/JSON/Excel files under `testcases/` (skips `data/` subdirectories). Each test case becomes a `TestCaseItem`. YAML data-driven cases (with `yaml_source` + `steps`) become `DataDrivenItem` (one per dataset). `--level` filters at collection time. `--workers` uses xdist `loadfile` distribution.
 - **YAML data-driven testing**: YAML testcase with `yaml_source` + `steps` triggers data-driven mode. Data file stores nested body structures. `body_from_yaml` sends dataset as request body. `validate_from_yaml` uses path mapping (data_path → response_jsonpath) to auto-generate assertions. Supports nested objects, arrays with `[]` wildcard, and missing field auto-skip. Each dataset generates an independent test item.
+- **Validator**: 15 assertion keywords (eq/neq/gt/lt/gte/lte/contains/not_null/is_null/not_empty/is_empty/type/length/regex). regex supports 10 built-in patterns (email/phone/id_card/url/ip/date/datetime/uuid/integer/number) and custom regex.
 - **Notifications**: Email (SMTP_SSL) and Feishu (webhook card with color-coded header, @mentions, and optional report_url button).
 - **Feishu bot service** (`scripts/feishu_bot.py`): Flask app that receives Feishu commands (`/run`, `/status`) to trigger tests, and serves `reports/` directory for online HTML report access.
 

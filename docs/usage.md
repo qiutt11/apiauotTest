@@ -454,9 +454,13 @@ steps:
 | `gte` | 大于等于 | `gte: [表达式, 下限]` | `gte: [status_code, 200]` |
 | `lte` | 小于等于 | `lte: [表达式, 上限]` | `lte: [status_code, 299]` |
 | `contains` | 包含子串 | `contains: [表达式, 子串]` | `contains: [$.msg, "成功"]` |
-| `not_null` | 不为空 | `not_null: [表达式]` | `not_null: [$.data.token]` |
+| `not_null` | 不为 None | `not_null: [表达式]` | `not_null: [$.data.token]` |
+| `is_null` | 为 None | `is_null: [表达式]` | `is_null: [$.data.deletedAt]` |
+| `not_empty` | 非空（str/list/dict） | `not_empty: [表达式]` | `not_empty: [$.data.list]` |
+| `is_empty` | 为空或 None | `is_empty: [表达式]` | `is_empty: [$.data.errors]` |
 | `type` | 类型校验 | `type: [表达式, 类型]` | `type: [$.data.id, int]` |
 | `length` | 长度校验 | `length: [表达式, 长度]` | `length: [$.data.list, 10]` |
+| `regex` | 正则匹配 | `regex: [表达式, 模式]` | `regex: [$.data.email, email]` |
 
 **表达式类型：**
 - `status_code` — HTTP 状态码
@@ -464,6 +468,8 @@ steps:
 - `${xxx}` — 引用变量池中的变量（如数据库提取的值）
 
 **type 支持的类型：** `int`、`float`、`str`、`list`、`dict`、`bool`
+
+**regex 内置模式：** `email`、`phone`（大陆手机号）、`id_card`（身份证）、`url`、`ip`、`date`、`datetime`、`uuid`、`integer`、`number`，也支持自定义正则：`regex: [$.data.code, "^[A-Z]{3}-\\d{4}$"]`
 
 ---
 
@@ -548,7 +554,7 @@ body:
 如果变量未找到，日志中会输出警告：`Unresolved variable: ${xxx}`。常见原因：
 - 变量名拼写错误
 - 提取变量的上游用例失败了
-- 跨文件引用但没加 `scope: global`（不同 YAML 文件间默认不共享变量）
+- 跨文件引用但没加 `scope: global` 或 `depends`（不同 YAML 文件间默认不共享变量）
 
 ---
 
@@ -611,7 +617,61 @@ body:
     - eq: [$.data.department_id, ${dept_id}]
 ```
 
-### 8.3 JSONPath 常用语法
+### 8.3 跨文件依赖（depends）
+
+当每个接口独立一个 YAML 文件时，通过 `depends` 声明依赖关系。框架自动先执行依赖文件，提取的变量自动注入当前文件，无需 `scope: global`。
+
+**单个依赖：**
+
+```yaml
+# testcases/user/create_user.yaml
+module: 创建用户
+depends: login/login.yaml         # 先执行登录，token 自动可用
+
+testcases:
+  - name: 创建用户
+    method: POST
+    url: /api/user
+    headers:
+      Authorization: Bearer ${token}
+    body:
+      name: 测试用户
+    extract:
+      user_id: $.data.id
+    validate:
+      - eq: [$.code, 0]
+```
+
+**链式依赖：**
+
+```yaml
+# testcases/user/delete_user.yaml
+module: 删除用户
+depends:
+  - login/login.yaml              # 1. 先登录
+  - user/create_user.yaml         # 2. 再创建用户（它自己也依赖 login）
+
+testcases:
+  - name: 删除用户
+    method: DELETE
+    url: /api/user/${user_id}
+    headers:
+      Authorization: Bearer ${token}
+    validate:
+      - eq: [$.code, 0]
+```
+
+**规则：**
+
+| 特性 | 说明 |
+|------|------|
+| 执行次数 | 每个依赖文件只执行一次（结果缓存） |
+| 变量传递 | 依赖文件 extract 的变量自动注入当前文件的 module scope |
+| 递归依赖 | 支持链式（A → B → C），自动递归解析 |
+| 路径格式 | 相对于 `testcases/` 目录 |
+| 依赖失败 | 依赖文件中任一用例失败，当前文件的用例标记为失败 |
+
+### 8.4 JSONPath 常用语法
 
 | 表达式 | 含义 |
 |--------|------|

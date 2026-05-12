@@ -73,7 +73,7 @@ autotest/
 │           └── user_datasets.yaml    # 数据驱动测试数据
 ├── hooks/           # Hook 扩展（按需编写）
 ├── common/          # 框架核心（无需修改）
-├── tests/           # 框架单元测试（154个）
+├── tests/           # 框架单元测试（175个）
 ├── reports/         # 报告输出（自动生成）
 ├── logs/            # 日志输出（自动生成）
 ├── run.py           # 运行入口
@@ -367,9 +367,13 @@ Sheet 名 = 模块名，表头 = 字段名，每行 = 一个用例。
 | `gte` | 大于等于 | `gte: [表达式, 下限]` | `gte: [status_code, 200]` |
 | `lte` | 小于等于 | `lte: [表达式, 上限]` | `lte: [status_code, 299]` |
 | `contains` | 包含子串 | `contains: [表达式, 子串]` | `contains: [$.msg, "成功"]` |
-| `not_null` | 不为空 | `not_null: [表达式]` | `not_null: [$.data.token]` |
+| `not_null` | 不为 None | `not_null: [表达式]` | `not_null: [$.data.token]` |
+| `is_null` | 为 None | `is_null: [表达式]` | `is_null: [$.data.deletedAt]` |
+| `not_empty` | 非空（str/list/dict） | `not_empty: [表达式]` | `not_empty: [$.data.list]` |
+| `is_empty` | 为空或 None | `is_empty: [表达式]` | `is_empty: [$.data.errors]` |
 | `type` | 类型校验 | `type: [表达式, 类型]` | `type: [$.data.id, int]` |
 | `length` | 长度校验 | `length: [表达式, 长度]` | `length: [$.data.list, 10]` |
+| `regex` | 正则匹配 | `regex: [表达式, 模式]` | `regex: [$.data.email, email]` |
 
 **表达式类型：**
 - `status_code` → HTTP 状态码
@@ -377,6 +381,8 @@ Sheet 名 = 模块名，表头 = 字段名，每行 = 一个用例。
 - `${xxx}` → 引用变量池中的变量
 
 **type 支持的类型：** `int`、`float`、`str`、`list`、`dict`、`bool`
+
+**regex 内置模式：** `email`、`phone`、`id_card`、`url`、`ip`、`date`、`datetime`、`uuid`、`integer`、`number`，也支持自定义正则
 
 ---
 
@@ -472,6 +478,40 @@ testcases:
     validate:
       - eq: [$.data.department_id, ${dept_id}]
 ```
+
+### 3. 跨文件依赖（depends）
+
+每个接口一个 YAML 文件时，通过 `depends` 声明依赖，框架自动先执行依赖文件，变量自动传递：
+
+```yaml
+# testcases/user/create_user.yaml
+module: 创建用户
+depends: login/login.yaml         # 自动先执行登录
+
+testcases:
+  - name: 创建用户
+    method: POST
+    url: /api/user
+    headers:
+      Authorization: Bearer ${token}   # login 提取的变量直接可用
+    extract:
+      user_id: $.data.id
+```
+
+```yaml
+# testcases/user/delete_user.yaml
+module: 删除用户
+depends:
+  - login/login.yaml              # 链式依赖
+  - user/create_user.yaml
+
+testcases:
+  - name: 删除用户
+    method: DELETE
+    url: /api/user/${user_id}
+```
+
+**规则：** 依赖只执行一次（缓存）、支持链式递归、路径相对于 `testcases/` 目录。
 
 ---
 
